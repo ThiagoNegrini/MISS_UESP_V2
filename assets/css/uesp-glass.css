@@ -1,0 +1,118 @@
+:root{
+  color-scheme:light;
+  --uesp-red:#c8102e;
+  --uesp-wine:#741426;
+  --uesp-wine-deep:#430b19;
+  --uesp-gold:#e8bd78;
+  --uesp-ink:#302329;
+  --uesp-muted:#67565c;
+  --uesp-line:rgba(116,20,38,.18);
+  --uesp-glass:rgba(255,255,255,.78);
+  --uesp-glass-strong:rgba(255,255,255,.9);
+  --uesp-shadow:0 16px 40px rgba(67,11,25,.11),inset 0 1px rgba(255,255,255,.86);
+}
+
+body{
+  color:var(--uesp-ink);
+  background-color:#f7f2f3;
+  background-image:
+    radial-gradient(ellipse at 7% 0%,rgba(200,16,46,.10),transparent 34rem),
+    radial-gradient(ellipse at 96% 32%,rgba(232,189,120,.13),transparent 28rem),
+    linear-gradient(145deg,#faf7f7,#f3ecee 72%,#fbf8f6);
+}
+
+header{
+  color:#fff;
+  background:linear-gradient(118deg,rgba(67,11,25,.97),rgba(116,20,38,.94) 58%,rgba(166,24,48,.92));
+  border-bottom:3px solid var(--uesp-gold);
+  box-shadow:0 12px 32px rgba(67,11,25,.2);
+}
+header h1,header h2,header small,header p{color:#fff}
+header p{opacity:.88}
+.brand-logos,.logo{
+  background:#fff;
+  border:1px solid rgba(255,255,255,.78);
+  border-radius:14px;
+  box-shadow:0 8px 24px rgba(30,5,12,.14);
+}
+
+.card,.category,.winner,.winner-tile,.winner-detail,.glass-login{
+  background:var(--uesp-glass);
+  border:1px solid var(--uesp-line);
+  box-shadow:var(--uesp-shadow);
+  -webkit-backdrop-filter:blur(16px) saturate(135%);
+  backdrop-filter:blur(16px) saturate(135%);
+}
+.candidate{
+  background:rgba(255,255,255,.88);
+  border-color:var(--uesp-line);
+  box-shadow:0 8px 22px rgba(67,11,25,.07);
+}
+.candidate.is-present{background:var(--uesp-glass-strong)}
+.stat{
+  background:linear-gradient(145deg,rgba(255,255,255,.94),rgba(255,247,248,.76));
+  border:1px solid var(--uesp-line);
+  box-shadow:0 12px 28px rgba(67,11,25,.09),inset 0 1px #fff;
+}
+.stat span{color:var(--uesp-muted)}
+.stat strong{color:var(--uesp-wine)}
+
+button:not(.secondary):not(.present):not(.undo),.navlink,.link,.filelabel{
+  color:#fff;
+  background:linear-gradient(135deg,var(--uesp-red),#a90f2b);
+  border-color:rgba(116,20,38,.46);
+  box-shadow:0 7px 18px rgba(116,20,38,.18),inset 0 1px rgba(255,255,255,.2);
+}
+button.secondary{
+  color:var(--uesp-wine);
+  background:rgba(255,255,255,.76);
+  border-color:var(--uesp-line);
+  box-shadow:0 4px 12px rgba(67,11,25,.06);
+}
+button:not(:disabled),.navlink,.link,.filelabel{transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
+button:not(:disabled):hover,.navlink:hover,.link:hover,.filelabel:hover{
+  filter:brightness(1.04);
+  transform:translateY(-1px);
+  box-shadow:0 10px 22px rgba(116,20,38,.2);
+}
+button:focus-visible,.navlink:focus-visible,.link:focus-visible,.filelabel:focus-visible,
+input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:3px solid rgba(232,189,120,.9);
+  outline-offset:2px;
+}
+input,select,textarea{
+  color:var(--uesp-ink);
+  background:rgba(255,255,255,.94);
+  border-color:rgba(116,20,38,.24);
+}
+input::placeholder,textarea::placeholder{color:#796970}
+.status{border-color:var(--uesp-line)}
+table{border-radius:12px}
+th{background:linear-gradient(110deg,var(--uesp-wine-deep),var(--uesp-wine))}
+tbody tr:nth-child(even) td{background:rgba(255,248,249,.82)}
+tbody tr:hover td{background:rgba(255,237,240,.92)}
+footer{
+  color:var(--uesp-muted);
+  background:rgba(255,255,255,.58);
+  border-color:var(--uesp-line);
+  -webkit-backdrop-filter:blur(12px);
+  backdrop-filter:blur(12px);
+}
+.glass-login{
+  color:var(--uesp-ink);
+  border-radius:20px;
+  box-shadow:0 24px 60px rgba(67,11,25,.16),inset 0 1px #fff;
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+}
+@media(max-width:600px){
+  header{box-shadow:0 8px 22px rgba(67,11,25,.16)}
+  .card,.category,.winner,.winner-tile,.winner-detail{backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+}
+@media print{
+  body{background:#fff!important;background-image:none!important}
+  header{box-shadow:none!important}
+  .card,.candidate,.category,.winner,.winner-tile,.winner-detail{background:#fff!important;backdrop-filter:none!important;box-shadow:none!important}
+}
