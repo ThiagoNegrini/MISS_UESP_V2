@@ -28,12 +28,18 @@ def load_access_pin():
 
 ACCESS_PIN,ACCESS_PIN_SOURCE=load_access_pin()
 SESSIONS={}
+DB_SCHEMAS_READY=set()
+CONTEST_SCHEMA_READY=False
 
 def dbconn(database=AUDITION_DB):
     """Abre o banco solicitado sem criar tabelas da Audição no banco do Concurso."""
     target=Path(database).resolve()
     con=sqlite3.connect(target,timeout=15)
     con.row_factory=sqlite3.Row
+    # The server initializes all three databases before accepting requests.
+    # Avoid repeating CREATE TABLE and PRAGMA work for every API call.
+    if target in DB_SCHEMAS_READY:
+        return con
     if target == AUDITION_DB.resolve():
         con.execute("""CREATE TABLE IF NOT EXISTS candidates (
           id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, name TEXT NOT NULL,
@@ -82,9 +88,12 @@ def dbconn(database=AUDITION_DB):
     else:
         con.close()
         raise ValueError("Banco de dados não reconhecido: "+str(target))
+    DB_SCHEMAS_READY.add(target)
     return con
 
 def ensure_contest_schema(con):
+    global CONTEST_SCHEMA_READY
+    if CONTEST_SCHEMA_READY: return
     con.execute("""CREATE TABLE IF NOT EXISTS contest_participants (id INTEGER PRIMARY KEY AUTOINCREMENT, source_candidate_id INTEGER NOT NULL UNIQUE, category TEXT NOT NULL, name TEXT NOT NULL, artistic_name TEXT DEFAULT '', mannequin TEXT DEFAULT '', shoe_size TEXT DEFAULT '', body_size TEXT DEFAULT '', photo TEXT DEFAULT '', migrated_at TEXT DEFAULT CURRENT_TIMESTAMP, audition_total REAL, audition_samba REAL, audition_partial_total REAL, audition_complete_evaluators INTEGER DEFAULT 0, audition_evaluators_with_data INTEGER DEFAULT 0, source_position INTEGER)""")
     con.execute("""CREATE TABLE IF NOT EXISTS contest_arrivals (candidate_id INTEGER PRIMARY KEY, arrived_at TEXT NOT NULL, device TEXT DEFAULT 'Recepção', status TEXT DEFAULT 'PRESENTE')""")
     con.execute("CREATE TABLE IF NOT EXISTS app_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
@@ -92,6 +101,7 @@ def ensure_contest_schema(con):
     for name,definition in (("audition_total","REAL"),("audition_samba","REAL"),("audition_partial_total","REAL"),("audition_complete_evaluators","INTEGER DEFAULT 0"),("audition_evaluators_with_data","INTEGER DEFAULT 0"),("source_position","INTEGER")):
         if name not in cols: con.execute("ALTER TABLE contest_participants ADD COLUMN "+name+" "+definition)
     con.execute("""CREATE TABLE IF NOT EXISTS contest_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id INTEGER NOT NULL, evaluator TEXT NOT NULL, aesthetics_sympathy REAL, communication_elegance REAL, samba REAL, updated_at TEXT NOT NULL, UNIQUE(candidate_id,evaluator))""")
+    CONTEST_SCHEMA_READY=True
 
 def migrate_published_contest(audition_con, contest_con):
     ensure_contest_schema(contest_con)
@@ -718,7 +728,9 @@ class Handler(SimpleHTTPRequestHandler):
                     (cid,evaluator,score,now))
                 con.execute("INSERT INTO app_settings(setting_key,setting_value) VALUES('released','0') ON CONFLICT(setting_key) DO UPDATE SET setting_value='0'")
                 con.commit()
-            return self.send_json({"ok":True,"updated_at":now})
+            with dbconn(CONTEST_DB) as contest_con, dbconn(AGULHA_DB) as agulha_con:
+                evaluators,results=agulha_result_rows(contest_con,agulha_con)
+            return self.send_json({"ok":True,"updated_at":now,"evaluators":evaluators,"results":results})
         if path=="/api/agulha/publication":
             try: data=self.read_json()
             except Exception as e: return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)
@@ -893,10 +905,7 @@ def local_ip():
 
 def init_contest_db():
     with dbconn(CONTEST_DB) as con:
-        con.execute("""CREATE TABLE IF NOT EXISTS contest_scores (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id INTEGER NOT NULL, evaluator TEXT NOT NULL,
-          aesthetics_sympathy REAL, communication_elegance REAL, samba REAL, updated_at TEXT NOT NULL,
-          UNIQUE(candidate_id,evaluator))""")
+        ensure_contest_schema(con)
         con.commit()
 
 if __name__=="__main__":
