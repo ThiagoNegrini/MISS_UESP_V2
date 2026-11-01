@@ -4,16 +4,20 @@ const categoryAliases={rainha:'Rainha do Samba',passista:'Passista de Ouro',diva
 function normCat(v){let s=String(v||'').trim().toLocaleLowerCase('pt-BR');if(s.includes('rainha'))return 'Rainha do Samba';if(s.includes('passista'))return 'Passista de Ouro';if(s.includes('diva')||s.includes('plus size')||s.includes('miss plus'))return 'Diva do Samba (Plus Size)';return String(v||'').trim()}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 let candidates=[], arrivals={};
+let refreshInFlight=false;
 const params=new URLSearchParams(location.search);const requested=(params.get('categoria')||'').toLowerCase();
 if(categoryAliases[requested]){$('category').value=categoryAliases[requested];$('category').disabled=true}
 const api=(path,options={})=>requestJSON(path,options)
 async function load(){
+ if(refreshInFlight||document.visibilityState==='hidden')return;
+ refreshInFlight=true;
  try{
   const [c,a]=await Promise.all([api('/api/arrival-candidates'),api('/api/arrivals')]);
   candidates=c.candidates||[];arrivals=a.arrivals||{};
   $('status').textContent='Conectado à central. Exibindo somente os 25 classificados na audição.';
   render();
  }catch(e){$('status').textContent='Sem comunicação com a central: '+e.message+'. Confira se o servidor está aberto e se este tablet está no mesmo Wi-Fi.'}
+ finally{refreshInFlight=false}
 }
 function render(){
  // Preserve tudo o que estiver digitado antes de reconstruir a lista (inclusive no auto-refresh).
@@ -65,4 +69,4 @@ $('photoInput').addEventListener('change',async()=>{
 
 $('category').addEventListener('change',render);$('search').addEventListener('input',render);
 $('exportXlsx').addEventListener('click',()=>{window.location.href='/api/export-xlsx'});
-load();setInterval(load,5000);
+load();setInterval(load,5000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load()});

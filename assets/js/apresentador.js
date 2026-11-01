@@ -5,15 +5,21 @@ const norm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLo
 let currentData={released:false,participants:[],winners:[]};
 let resultsOpen=false;
 let renderedWinnersSignature='';
+let agulhaRefreshInFlight=false,presenterRefreshInFlight=false;
 async function refreshAgulha(){
+ if(agulhaRefreshInFlight||document.visibilityState==='hidden')return;
+ agulhaRefreshInFlight=true;
  try{
   const j=await requestJSON('/api/agulha/presenter-data');
   $('agulhaButton').disabled=!j.released;
   $('agulhaStatus').textContent=j.released?'Vencedora do Agulha de Ouro liberada independentemente do Concurso. Clique para revelar.':'Resultado geral do Agulha de Ouro ainda não liberado.';
   $('agulhaButton').onclick=()=>{if(!j.released)return;$('agulhaWinners').innerHTML=(j.winners||[]).map(w=>'<article class="winner"><div>'+(w.photo?'<img src="'+esc(w.photo)+'" alt="">':'')+'</div><div><div class="position">AGULHA DE OURO</div><h3>'+esc(w.name)+'</h3><div>'+esc(w.category)+'</div></div></article>').join('')||'<div class="empty">Não há resultado publicado.</div>';};
  }catch(e){$('agulhaStatus').textContent='Não foi possível carregar o Agulha de Ouro: '+e.message}
+ finally{agulhaRefreshInFlight=false}
 }
 async function refresh(){
+ if(presenterRefreshInFlight||document.visibilityState==='hidden')return;
+ presenterRefreshInFlight=true;
  try{
   const j=await requestJSON('/api/presenter-data');
   // Depois de abrir o resultado, congela a interface para a sincronização periódica não fechar os detalhes.
@@ -21,6 +27,7 @@ async function refresh(){
   currentData=j;renderParticipants();renderRelease();
   $('status').textContent=(j.participants||[]).length+' participante(s) carregado(s) · sincronizado às '+new Date().toLocaleTimeString('pt-BR');
  }catch(e){$('status').textContent='Não foi possível carregar: '+e.message}
+ finally{presenterRefreshInFlight=false}
 }
 function renderParticipants(){
  const groups={passista:[],diva:[],rainha:[]};
@@ -78,4 +85,4 @@ function toggleWinner(index){
  button.setAttribute('aria-expanded',String(opening));
 }
 $('resultButton').addEventListener('click',showResults);
-refresh();refreshAgulha();setInterval(refresh,5000);setInterval(refreshAgulha,3000);
+refresh();refreshAgulha();setInterval(refresh,5000);setInterval(refreshAgulha,3000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){refresh();refreshAgulha()}});

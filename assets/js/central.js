@@ -10,7 +10,10 @@ const $=id=>document.getElementById(id);
 const api=(path,options={})=>requestJSON(path,options)
 async function loadRoster(){try{const stage=$('rosterStage').value;const j=await api('/api/evaluators?stage='+stage);$('rosterNames').value=(j.evaluators||[]).join('\n');$('rosterStatus').textContent='Lista '+stage+' carregada ('+(j.evaluators||[]).length+' avaliador(es)).'}catch(e){$('rosterStatus').textContent='Falha ao carregar lista: '+e.message}}
 $('loadRoster').addEventListener('click',loadRoster);$('rosterStage').addEventListener('change',loadRoster);$('saveRoster').addEventListener('click',async()=>{try{const stage=$('rosterStage').value,evaluators=$('rosterNames').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const j=await api('/api/evaluators',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage,evaluators})});$('rosterNames').value=j.evaluators.join('\n');$('rosterStatus').textContent='Lista '+stage+' salva: '+j.evaluators.length+' avaliador(es).'}catch(e){$('rosterStatus').textContent='Falha ao salvar: '+e.message}});loadRoster();
+let refreshInFlight=false;
 async function refresh(){
+ if(refreshInFlight||document.visibilityState==='hidden')return;
+ refreshInFlight=true;
  try{
    const stage=$('globalStage')?.value==='concurso'?'CONCURSO':'AUDICAO';
    const [d,c,a,s,e,contest,contestEvaluators]=await Promise.all([api('/api/arrival-candidates'),api('/api/candidates'),api('/api/arrivals'),api('/api/scores'),api('/api/evaluators?stage='+stage),api('/api/contest-candidates'),api('/api/evaluators?stage=CONCURSO')]);
@@ -18,6 +21,7 @@ async function refresh(){
    const presentes=previewRows.filter(x=>arrivalFor(x)).length;
    $('dbStatus').textContent='Banco local conectado. '+previewRows.length+' participante(s) cadastrado(s); '+((contest.candidates||[]).length)+' classificado(s) para o Concurso; '+presentes+' chegada(s) confirmada(s). Sincronização automática ativa.';
  }catch(e){$('dbStatus').textContent='Não foi possível atualizar o painel: '+e.message+'. Confirme que a Central está aberta pelo endereço do servidor local.'}
+ finally{refreshInFlight=false}
 }
 function normCategory(value){
  const s=String(value||'').trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/\\s+/g,' ');
@@ -109,4 +113,4 @@ $('exportBtn').addEventListener('click',()=>{
  const csv=['Categoria;Nome do candidato;Chegada;Horário;Dispositivo',...rows.map(x=>{const a=arrivalFor(x);return `"${normCategory(x.category).replaceAll('"','""')}";"${String(x.name||'').replaceAll('"','""')}";"${a?'Presente':'Aguardando'}";"${a?formatTime(a.arrived_at):''}";"${a?String(a.device||'').replaceAll('"','""'):''}"`})].join('\r\n');
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='candidatos_uesp_2027.csv';a.click();URL.revokeObjectURL(a.href)
 });
-refresh();setInterval(refresh,5000);
+refresh();setInterval(refresh,5000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh()});
