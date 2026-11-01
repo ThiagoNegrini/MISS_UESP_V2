@@ -249,6 +249,18 @@ def ensure_agulha_publication_version(con):
         con.execute("INSERT INTO app_settings(setting_key,setting_value) VALUES('released','0') "
             "ON CONFLICT(setting_key) DO UPDATE SET setting_value='0'")
 
+def backup_database(database):
+    """Create a consistent SQLite snapshot before a destructive reimport."""
+    if not database.exists():
+        return None
+    backup_dir=HERE/"backups"
+    backup_dir.mkdir(exist_ok=True)
+    stamp=datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    destination=backup_dir/(database.stem+"_pre_import_"+stamp+".db")
+    with sqlite3.connect(database,timeout=15) as source, sqlite3.connect(destination) as target:
+        source.backup(target)
+    return destination
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*a,**kw): super().__init__(*a,directory=str(HERE),**kw)
     def translate_path(self,path):
@@ -789,6 +801,8 @@ class Handler(SimpleHTTPRequestHandler):
                 con.execute("DELETE FROM arrivals WHERE candidate_id=?",(cid,));con.commit()
                 return self.send_json({"ok":True,"arrival":None})
         if path!="/api/import": return self.send_json({"ok":False,"error":"Rota não encontrada"},404)
+        if self.headers.get("X-Uesp-Confirm-Import")!="true":
+            return self.send_json({"ok":False,"error":"Confirme a reimportação na tela da Central."},400)
         ctype=self.headers.get("content-type","")
         try:
             length=int(self.headers.get("content-length","0"))
@@ -806,12 +820,13 @@ class Handler(SimpleHTTPRequestHandler):
                 rows.append((cat,name))
             wb.close()
             if not rows:return self.send_json({"ok":False,"error":"Nenhum candidato válido nas colunas A e B."},400)
+            backup_path=backup_database(AUDITION_DB)
             with dbconn() as con:
                 # Reimportação substitui candidatos e limpa presenças antigas para evitar associação incorreta.
                 con.execute("DELETE FROM arrivals");con.execute("DELETE FROM scores");con.execute("DELETE FROM audition_result_publication");con.execute("DELETE FROM candidates")
                 con.executemany("INSERT OR IGNORE INTO candidates(category,name) VALUES (?,?)",rows);con.commit()
                 grouped=con.execute("SELECT category,COUNT(*) n FROM candidates GROUP BY category").fetchall()
-            return self.send_json({"ok":True,"imported":sum(x["n"] for x in grouped),"counts":{x["category"]:x["n"] for x in grouped},"skipped":skipped})
+            return self.send_json({"ok":True,"imported":sum(x["n"] for x in grouped),"counts":{x["category"]:x["n"] for x in grouped},"skipped":skipped,"backup":backup_path.name if backup_path else None})
         except ImportError:return self.send_json({"ok":False,"error":"Falta openpyxl. Execute python -m pip install openpyxl"},500)
         except Exception as e:return self.send_json({"ok":False,"error":"Erro ao importar Excel: "+str(e)},400)
     def log_message(self,fmt,*args):print("%s - %s"%(self.address_string(),fmt%args))

@@ -78,8 +78,10 @@ function render(){
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 $('file').addEventListener('change',()=>{$('importBtn').disabled=!$('file').files.length;$('importStatus').textContent=$('file').files.length?'Arquivo selecionado: '+$('file').files[0].name:'Aguardando arquivo Excel.'});
 $('importBtn').addEventListener('click',async()=>{
- const file=$('file').files[0];if(!file)return;$('importBtn').disabled=true;$('importStatus').textContent='Importando e validando candidatos…';
- try{const fd=new FormData();fd.append('file',file);const r=await fetch('/api/import',{method:'POST',body:fd});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Erro ao importar');$('importStatus').textContent=`Importação concluída: ${j.imported} candidato(s). Categorias: ${JSON.stringify(j.counts)}.`;await refresh()}
+ const file=$('file').files[0];if(!file)return;
+ if(!confirm('A reimportação substituirá a lista de candidatas e apagará as chegadas, notas da Audição e publicação atual. O sistema criará um backup automático do banco da Audição antes de continuar. Deseja reimportar?'))return;
+ $('importBtn').disabled=true;$('importStatus').textContent='Importando e validando candidatos…';
+ try{const fd=new FormData();fd.append('file',file);const r=await fetch('/api/import',{method:'POST',headers:{'X-Uesp-Confirm-Import':'true'},body:fd});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Erro ao importar');$('importStatus').textContent=`Importação concluída: ${j.imported} candidato(s). Backup: ${j.backup||'não necessário'}.`;await refresh()}
  catch(e){$('importStatus').textContent='Falha na importação: '+e.message}finally{$('importBtn').disabled=false}
 });
 $('refreshBtn').addEventListener('click',refresh);$('filter').addEventListener('change',render);if($('candidateSearch'))$('candidateSearch').addEventListener('input',render);
