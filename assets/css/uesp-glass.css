@@ -103,7 +103,7 @@ footer{
   border-radius:20px;
   box-shadow:0 24px 60px rgba(67,11,25,.16),inset 0 1px #fff;
 }
-#resultButton,#agulhaButton,.winner-tile{
+#resultButton,#agulhaButton,button.winner-tile:not(:disabled){
   color:var(--uesp-wine);
   background:linear-gradient(135deg,rgba(255,255,255,.94),rgba(255,239,242,.82) 58%,rgba(232,189,120,.28));
   border:1px solid rgba(116,20,38,.24);
@@ -111,14 +111,14 @@ footer{
   -webkit-backdrop-filter:blur(14px) saturate(140%);
   backdrop-filter:blur(14px) saturate(140%);
 }
-#resultButton:not(:disabled):hover,#agulhaButton:not(:disabled):hover,.winner-tile:hover{
+#resultButton:not(:disabled):hover,#agulhaButton:not(:disabled):hover,button.winner-tile:not(:disabled):hover{
   color:var(--uesp-wine-deep);
   background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(255,232,237,.88) 58%,rgba(232,189,120,.38));
   border-color:rgba(200,16,46,.42);
   box-shadow:0 14px 30px rgba(67,11,25,.14),inset 0 1px #fff;
 }
 #resultButton:disabled,#agulhaButton:disabled{opacity:.56;cursor:wait;filter:saturate(.55)}
-.winner-tile[aria-expanded="true"]{
+button.winner-tile[aria-expanded="true"]{
   color:var(--uesp-wine-deep);
   background:linear-gradient(135deg,rgba(255,255,255,.97),rgba(255,232,237,.9) 60%,rgba(232,189,120,.4));
   border-color:rgba(200,16,46,.42);
