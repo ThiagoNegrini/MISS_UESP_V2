@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Central de Controle UESP 2027 — servidor local com controle de chegada."""
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from http.cookies import SimpleCookie
 from urllib.parse import unquote, urlparse, urlsplit
-import sqlite3, json, socket, io
+import hmac, os, secrets, sqlite3, json, socket, io, time
 from pathlib import Path
 from email.parser import BytesParser
 from email.policy import default
@@ -13,6 +14,8 @@ AUDITION_DB=HERE/"banco_audicao.db"
 CONTEST_DB=HERE/"banco_concurso.db"
 AGULHA_DB=HERE/"banco_agulha_ouro.db"
 CATEGORIES=["Rainha do Samba","Passista de Ouro","Diva do Samba (Plus Size)"]
+ACCESS_PIN=os.environ.get("UESP_ACCESS_PIN") or secrets.token_urlsafe(8)
+SESSIONS={}
 
 def dbconn(database=AUDITION_DB):
     """Abre o banco solicitado sem criar tabelas da Audição no banco do Concurso."""
@@ -273,7 +276,7 @@ class Handler(SimpleHTTPRequestHandler):
             relative=candidate.relative_to(HERE).as_posix()
         except ValueError:
             return str(HERE/"__resource_not_found__")
-        allowed_pages={"agulha.html","apresentador.html","avaliador.html","central.html","chegada.html","resultados.html"}
+        allowed_pages={"agulha.html","apresentador.html","avaliador.html","central.html","chegada.html","login.html","resultados.html"}
         allowed_asset=(relative.startswith("assets/css/") and candidate.suffix.lower()==".css") or (relative.startswith("assets/js/") and candidate.suffix.lower()==".js")
         if relative not in allowed_pages and not allowed_asset:
             return str(HERE/"__resource_not_found__")
@@ -292,10 +295,23 @@ class Handler(SimpleHTTPRequestHandler):
             return urlsplit(origin).netloc.casefold()==self.headers.get("Host","").casefold()
         except ValueError:
             return False
-    def send_json(self,data,status=200):
+    def is_authenticated(self):
+        cookie=SimpleCookie()
+        try: cookie.load(self.headers.get("Cookie",""))
+        except Exception: return False
+        session=cookie.get("uesp_session")
+        if not session: return False
+        expires=SESSIONS.get(session.value)
+        if expires is None: return False
+        if expires<=time.monotonic():
+            SESSIONS.pop(session.value,None)
+            return False
+        return True
+    def send_json(self,data,status=200,extra_headers=()):
         body=json.dumps(data,ensure_ascii=False).encode()
         self.send_response(status);self.send_header("Content-Type","application/json; charset=utf-8")
         self.send_header("Content-Length",str(len(body)));self.send_header("Cache-Control","no-store")
+        for name,value in extra_headers: self.send_header(name,value)
         self.end_headers();self.wfile.write(body)
     def read_json(self):
         length=int(self.headers.get("content-length","0"))
@@ -303,7 +319,10 @@ class Handler(SimpleHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8"))
     def do_GET(self):
         path=urlparse(self.path).path
-        if path=="/api/health": return self.send_json({"ok":True,"service":"UESP 2027","databases":{"audition":AUDITION_DB.name,"contest":CONTEST_DB.name,"agulha":AGULHA_DB.name}})
+        if path not in ("/login.html","/api/health") and not self.is_authenticated():
+            if path.startswith("/api/"): return self.send_json({"ok":False,"error":"Acesso não autenticado. Entre com o código do servidor."},401)
+            self.send_response(303);self.send_header("Location","/login.html");self.end_headers();return
+        if path=="/api/health": return self.send_json({"ok":True,"service":"UESP 2027"})
         if path=="/api/active-stage":
             with dbconn(AUDITION_DB) as con:
                 row=con.execute("SELECT setting_value FROM app_settings WHERE setting_key='active_stage'").fetchone()
@@ -501,9 +520,32 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"ok":True,"results":out})
         return super().do_GET()
     def do_POST(self):
+        path=urlparse(self.path).path
+        if path!="/api/login" and not self.is_authenticated():
+            return self.send_json({"ok":False,"error":"Sessão encerrada. Entre novamente com o código do servidor."},401)
         if not self.request_has_same_origin():
             return self.send_json({"ok":False,"error":"Origem da requisição inválida."},403)
-        path=urlparse(self.path).path
+        if path=="/api/login":
+            try: data=self.read_json()
+            except Exception as e: return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)
+            pin=str(data.get("pin",""))
+            if not hmac.compare_digest(pin,ACCESS_PIN):
+                return self.send_json({"ok":False,"error":"Código de acesso incorreto."},401)
+            now=time.monotonic()
+            for old_token,expires in list(SESSIONS.items()):
+                if expires<=now: SESSIONS.pop(old_token,None)
+            token=secrets.token_urlsafe(32)
+            SESSIONS[token]=now+8*60*60
+            cookie="uesp_session="+token+"; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800"
+            return self.send_json({"ok":True},extra_headers=[("Set-Cookie",cookie)])
+        if path=="/api/logout":
+            cookie=SimpleCookie()
+            try: cookie.load(self.headers.get("Cookie",""))
+            except Exception: pass
+            session=cookie.get("uesp_session")
+            if session: SESSIONS.pop(session.value,None)
+            expired="uesp_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+            return self.send_json({"ok":True},extra_headers=[("Set-Cookie",expired)])
         if path=="/api/active-stage":
             try: data=self.read_json()
             except Exception as e: return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)
@@ -855,6 +897,10 @@ if __name__=="__main__":
     except Exception as e: print("Aviso: migração do Concurso não concluída: "+str(e))
     ip=local_ip()
     print("\nCentral UESP 2027 iniciada.")
+    if os.environ.get("UESP_ACCESS_PIN"):
+        print("Código de acesso configurado pela variável UESP_ACCESS_PIN.")
+    else:
+        print("Código temporário de acesso (válido até encerrar o servidor): "+ACCESS_PIN)
     print("No notebook: http://127.0.0.1:8765/central.html")
     print(f"Controle de chegada: http://127.0.0.1:8765/chegada.html")
     print(f"Na rede Wi-Fi: http://{ip}:8765/central.html")

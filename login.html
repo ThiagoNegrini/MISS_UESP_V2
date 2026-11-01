@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Acesso — MISS UESP</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f8edf0;color:#302329;font:16px Arial,sans-serif}
+    main{width:min(92vw,420px);background:white;border:1px solid #e5b7be;border-radius:14px;padding:28px;box-shadow:0 12px 35px #5c14201c}
+    h1{margin:0 0 8px;color:#c8102e;font-size:24px}p{line-height:1.5;color:#62545a}label{display:block;margin:20px 0 8px;font-weight:bold}
+    input,button{width:100%;font:inherit;border-radius:8px;padding:12px}input{border:1px solid #bcaab0}button{margin-top:14px;border:0;background:#c8102e;color:white;font-weight:bold;cursor:pointer}
+    #status{min-height:24px;margin-top:12px;color:#a50d25}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MISS UESP • CARNAVAL 2027</h1>
+    <p>Digite o código de acesso exibido no terminal do notebook que está executando a Central.</p>
+    <form id="loginForm">
+      <label for="pin">Código de acesso</label>
+      <input id="pin" name="pin" type="password" autocomplete="current-password" required autofocus>
+      <button type="submit">Entrar</button>
+    </form>
+    <div id="status" role="status" aria-live="polite"></div>
+  </main>
+  <script>
+    const form=document.getElementById('loginForm');
+    const status=document.getElementById('status');
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();
+      const button=form.querySelector('button');
+      button.disabled=true;
+      status.textContent='Validando código…';
+      try{
+        const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:document.getElementById('pin').value})});
+        const result=await response.json();
+        if(!response.ok||result.ok!==true)throw new Error(result.error||'Não foi possível entrar.');
+        location.replace('/central.html');
+      }catch(error){
+        status.textContent=error.message;
+        button.disabled=false;
+      }
+    });
+  </script>
+</body>
+</html>
