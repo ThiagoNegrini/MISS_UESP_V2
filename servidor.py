@@ -274,17 +274,69 @@ def ensure_agulha_publication_version(con):
         con.execute("INSERT INTO app_settings(setting_key,setting_value) VALUES('released','0') "
             "ON CONFLICT(setting_key) DO UPDATE SET setting_value='0'")
 
-def backup_database(database):
-    """Create a consistent SQLite snapshot before a destructive reimport."""
+def backup_database(database,reason="pre_import"):
+    """Create a consistent SQLite snapshot in the local database backup folder."""
     if not database.exists():
         return None
-    backup_dir=HERE/"backups"
+    backup_dir=HERE/"backup de banco"
     backup_dir.mkdir(exist_ok=True)
-    stamp=datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    destination=backup_dir/(database.stem+"_pre_import_"+stamp+".db")
-    with sqlite3.connect(database,timeout=15) as source, sqlite3.connect(destination) as target:
-        source.backup(target)
+    stamp=datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
+    destination=backup_dir/(database.stem+"_"+reason+"_"+stamp+".db")
+    try:
+        with sqlite3.connect(database,timeout=15) as source, sqlite3.connect(destination) as target:
+            source.backup(target)
+            integrity=target.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity!="ok": raise sqlite3.DatabaseError("A cópia não passou na verificação de integridade.")
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
     return destination
+
+def backup_all_databases(reason="limpeza_total"):
+    """Back up every application database before clearing operational data."""
+    databases=(AUDITION_DB,CONTEST_DB,AGULHA_DB)
+    missing=[database.name for database in databases if not database.is_file()]
+    if missing:
+        raise FileNotFoundError("Banco(s) não encontrado(s): "+", ".join(missing))
+    backups=[]
+    for database in databases:
+        backup=backup_database(database,reason)
+        if backup is None:
+            raise FileNotFoundError("Não foi possível criar backup de "+database.name)
+        backups.append(backup)
+    return backups
+
+def clear_all_database_data():
+    """Clear every user table across the three databases in one SQLite transaction."""
+    con=sqlite3.connect(AUDITION_DB,timeout=30)
+    con.row_factory=sqlite3.Row
+    try:
+        con.execute("ATTACH DATABASE ? AS contest",(str(CONTEST_DB),))
+        con.execute("ATTACH DATABASE ? AS agulha",(str(AGULHA_DB),))
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.execute("BEGIN IMMEDIATE")
+        deleted={}
+        for schema in ("main","contest","agulha"):
+            tables=[row[0] for row in con.execute(
+                f"SELECT name FROM {schema}.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()]
+            for table in tables:
+                quoted='"'+table.replace('"','""')+'"'
+                qualified=f'{schema}.{quoted}'
+                deleted[f"{schema}.{table}"]=con.execute(f"SELECT COUNT(*) FROM {qualified}").fetchone()[0]
+                con.execute(f"DELETE FROM {qualified}")
+            has_sequence=con.execute(
+                f"SELECT 1 FROM {schema}.sqlite_master WHERE type='table' AND name='sqlite_sequence'"
+            ).fetchone()
+            if has_sequence:
+                con.execute(f"DELETE FROM {schema}.sqlite_sequence")
+        con.commit()
+        return deleted
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*a,**kw): super().__init__(*a,directory=str(HERE),**kw)
@@ -628,16 +680,21 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 return self.send_json({"ok":False,"error":"Não foi possível limpar as notas do Concurso: "+str(e)},500)
         if path=="/api/clear-scores":
-            # Os nomes dos avaliadores são armazenados na própria tabela scores.
-            # Esta operação remove avaliações e nomes, preservando candidatos e chegadas.
             try:
-                with dbconn() as con:
-                    deleted=con.execute("SELECT COUNT(*) FROM scores").fetchone()[0]
-                    con.execute("DELETE FROM scores")
-                    con.commit()
-                return self.send_json({"ok":True,"deleted":deleted,"message":"Notas e registros de avaliadores excluídos. Candidatos e chegadas foram preservados."})
+                data=self.read_json()
             except Exception as e:
-                return self.send_json({"ok":False,"error":"Não foi possível excluir as notas: "+str(e)},500)
+                return self.send_json({"ok":False,"error":"Confirmação inválida: "+str(e)},400)
+            if not isinstance(data,dict) or data.get("confirm") is not True:
+                return self.send_json({"ok":False,"error":"A limpeza total exige confirmação explícita."},400)
+            try:
+                backups=backup_all_databases("antes_limpeza_total")
+            except Exception as e:
+                return self.send_json({"ok":False,"error":"Limpeza cancelada: não foi possível criar todos os backups; nenhum dado foi apagado. Detalhe: "+str(e)},500)
+            try:
+                deleted=clear_all_database_data()
+                return self.send_json({"ok":True,"deleted_records":sum(deleted.values()),"deleted_tables":deleted,"backups":[backup.name for backup in backups],"message":"Os três bancos foram limpos e estão prontos para uma nova lista e uma nova Audição/Concurso."})
+            except Exception as e:
+                return self.send_json({"ok":False,"error":"Falha na limpeza total. Os backups foram criados e podem ser restaurados: "+", ".join(backup.name for backup in backups)+". Detalhe: "+str(e)},500)
         if path=="/api/publish-audition-results":
             try:
                 data=self.read_json()

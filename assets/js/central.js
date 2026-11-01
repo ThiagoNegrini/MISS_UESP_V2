@@ -99,12 +99,13 @@ $('clearContestBtn').addEventListener('click',async()=>{
  try{const j=await api('/api/clear-contest-scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});$('clearContestStatus').textContent=`Concluído: ${j.deleted} nota(s) do Concurso removida(s). Lista de avaliadores e dados da Audição preservados.`;}catch(e){$('clearContestStatus').textContent='Falha: '+e.message}finally{b.disabled=false}
 });
 $('clearScoresBtn').addEventListener('click',async()=>{
- const confirmed=confirm('ATENÇÃO: esta ação reiniciará os dados operacionais como numa nova importação. Serão apagados TODAS as notas e nomes de avaliadores, avaliações do Concurso, chegadas, fotos, nome artístico, manequim, calçado, tamanho de body e resultados publicados. A lista oficial de candidatos e a planilha importada serão preservadas. Esta ação NÃO pode ser desfeita. Deseja continuar?');
+ const confirmed=confirm('ATENÇÃO: esta limpeza total apagará TODOS os dados dos três bancos: lista de participantes, chegadas, fotos, dados de cadastro, notas, avaliadores, resultados publicados e configurações de Audição, Concurso e Agulha de Ouro. Serão criados backups dos três bancos na pasta "backup de banco" antes da exclusão. Depois, será necessário importar uma nova lista. Deseja continuar?');
  if(!confirmed)return;
- const btn=$('clearScoresBtn');btn.disabled=true;$('clearScoresStatus').textContent='Limpando notas, chegadas, fotos e dados de cadastro…';
+ const btn=$('clearScoresBtn');btn.disabled=true;$('clearScoresStatus').textContent='Criando backups dos três bancos antes da limpeza total…';
  try{
   const j=await api('/api/clear-scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
-  $('clearScoresStatus').textContent=`Concluído: ${j.deleted} nota(s) de Audição, ${j.deleted_contest||0} avaliação(ões) do Concurso, ${j.deleted_arrivals||0} chegada(s) e ${j.deleted_photos||0} foto(s) apagadas. A lista oficial de candidatos e a planilha importada foram preservadas.`;
+  $('globalStage').value='audicao';await applyGlobalStage('audicao',false);await refresh();await loadRoster();
+  $('clearScoresStatus').textContent=`Limpeza total concluída: ${j.deleted_records||0} registro(s) apagados. Importe uma nova lista para iniciar. Backups: ${(j.backups||[]).map(name=>'backup de banco\\'+name).join(' | ')}`;
  }catch(e){$('clearScoresStatus').textContent='Falha na exclusão: '+e.message}
  finally{btn.disabled=false}
 });

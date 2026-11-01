@@ -4,6 +4,7 @@
 *.db-wal
 UESP_ACCESS_PIN.txt
 backups/
+backup de banco/
 .venv/
 __pycache__/
 *.py[cod]

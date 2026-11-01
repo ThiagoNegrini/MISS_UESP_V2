@@ -50,10 +50,10 @@ O servidor escuta na porta TCP 8765 em todas as interfaces. Para acessar de outr
 
 ## Atualização e segurança dos dados
 
-- Antes de atualizar os arquivos do projeto, encerre o servidor e faça backup dos dois bancos `.db`.
+- Antes de atualizar os arquivos do projeto, encerre o servidor e faça backup dos três bancos `.db`.
 - Não apague os bancos para atualizar o código.
 - Os bancos de dados e os backups são arquivos locais e estão excluídos do Git. Nunca publique arquivos `.db` com dados reais no repositório.
-- Uma reimportação confirmada cria uma cópia consistente do banco da Audição em `backups/` antes de substituir a lista. Se precisar restaurá-la, encerre o servidor e copie o arquivo de backup escolhido para `banco_audicao.db`.
+- Uma reimportação confirmada cria uma cópia consistente do banco da Audição em `backup de banco/` antes de substituir a lista. A limpeza total cria cópias dos três bancos nessa mesma pasta, com o nome do banco e data/hora no arquivo; só apaga os dados se todos os backups forem concluídos. Para restaurar, encerre o servidor e copie os arquivos escolhidos para os nomes originais `banco_audicao.db`, `banco_concurso.db` e `banco_agulha_ouro.db`.
 - Não compartilhe a pasta de bancos por sincronização simultânea (OneDrive/Dropbox/Google Drive) enquanto o servidor estiver gravando.
 - O servidor serve somente as páginas e os recursos da aplicação; os bancos SQLite, backups e arquivos Python não são baixáveis pelas rotas HTTP.
 - Requisições de gravação precisam vir da mesma origem da aplicação. Isso reduz requisições forjadas por páginas abertas em outros sites.
