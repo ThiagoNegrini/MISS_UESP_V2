@@ -2,6 +2,7 @@
 *.db-journal
 *.db-shm
 *.db-wal
+UESP_ACCESS_PIN.txt
 backups/
 .venv/
 __pycache__/

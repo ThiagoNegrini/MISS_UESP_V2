@@ -14,7 +14,19 @@ AUDITION_DB=HERE/"banco_audicao.db"
 CONTEST_DB=HERE/"banco_concurso.db"
 AGULHA_DB=HERE/"banco_agulha_ouro.db"
 CATEGORIES=["Rainha do Samba","Passista de Ouro","Diva do Samba (Plus Size)"]
-ACCESS_PIN=os.environ.get("UESP_ACCESS_PIN") or secrets.token_urlsafe(8)
+PIN_FILE=HERE/"UESP_ACCESS_PIN.txt"
+def load_access_pin():
+    env_pin=os.environ.get("UESP_ACCESS_PIN","").strip()
+    if env_pin: return env_pin,"environment"
+    try:
+        pin=next((line.strip() for line in PIN_FILE.read_text(encoding="utf-8-sig").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")),"")
+    except OSError:
+        pin=""
+    if pin: return pin,"file"
+    return secrets.token_urlsafe(8),"generated"
+
+ACCESS_PIN,ACCESS_PIN_SOURCE=load_access_pin()
 SESSIONS={}
 
 def dbconn(database=AUDITION_DB):
@@ -897,8 +909,10 @@ if __name__=="__main__":
     except Exception as e: print("Aviso: migração do Concurso não concluída: "+str(e))
     ip=local_ip()
     print("\nCentral UESP 2027 iniciada.")
-    if os.environ.get("UESP_ACCESS_PIN"):
+    if ACCESS_PIN_SOURCE=="environment":
         print("Código de acesso configurado pela variável UESP_ACCESS_PIN.")
+    elif ACCESS_PIN_SOURCE=="file":
+        print("Código de acesso carregado de "+PIN_FILE.name+".")
     else:
         print("Código temporário de acesso (válido até encerrar o servidor): "+ACCESS_PIN)
     print("No notebook: http://127.0.0.1:8765/central.html")
