@@ -58,6 +58,7 @@ O servidor escuta na porta TCP 8765 em todas as interfaces. Para acessar de outr
 - O servidor serve somente as páginas e os recursos da aplicação; os bancos SQLite, backups e arquivos Python não são baixáveis pelas rotas HTTP.
 - Requisições de gravação precisam vir da mesma origem da aplicação. Isso reduz requisições forjadas por páginas abertas em outros sites.
 - O servidor continua disponível para dispositivos na mesma rede local. Use somente uma rede Wi-Fi confiável, permita o Python apenas em redes privadas no Firewall e nunca exponha a porta 8765 diretamente à internet. Não há autenticação individual de usuários nesta versão.
+- O Avaliador guarda rascunhos não enviados no armazenamento local do navegador, separados por avaliador, etapa e participante. A lista de candidatas e as notas salvas continuam dependendo do servidor; se a conexão cair depois que a lista carregar, reconecte e pressione Salvar para enviar cada rascunho. Rascunhos não sincronizam entre dispositivos e não substituem os bancos do servidor; não limpe os dados do navegador até confirmar o envio.
 
 ## Dependências Python
 
