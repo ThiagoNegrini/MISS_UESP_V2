@@ -299,7 +299,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return str(HERE/"__resource_not_found__")
         allowed_pages={"agulha.html","apresentador.html","avaliador.html","central.html","chegada.html","login.html","resultados.html"}
-        allowed_asset=(relative.startswith("assets/css/") and candidate.suffix.lower()==".css") or (relative.startswith("assets/js/") and candidate.suffix.lower()==".js")
+        allowed_asset=(relative.startswith("assets/css/") and candidate.suffix.lower()==".css") or (relative.startswith("assets/js/") and candidate.suffix.lower()==".js") or (relative=="assets/img/logo-uesp.png" and candidate.suffix.lower()==".png")
         if relative not in allowed_pages and not allowed_asset:
             return str(HERE/"__resource_not_found__")
         return str(candidate)
