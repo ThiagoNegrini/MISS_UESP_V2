@@ -217,10 +217,17 @@ async function saveAgulha(id,b){
   clearScoringDraftIfSame('agulha',id,'score',evaluator,score);removePendingByValues('agulha',id,'score',evaluator,{value:score});
   if(result.results)agulhaResults=result.results;else await loadAgulha();serverAvailable=true;renderAgulha();updatePendingQueueUi();$('connection').textContent='Nota do Agulha de Ouro salva no servidor.';
  }catch(e){
-  const latest=getScoringDraft('agulha',id,'score',evaluator)??score,queued=queuePendingScore('agulha',id,'score',evaluator,{value:latest});
-  $('am'+id).textContent=queued?'Falha de conexão. Nota mantida neste tablet e será reenviada automaticamente.':'Erro: '+e.message;
-  if(!e.status||e.status>=500){serverAvailable=false;schedulePendingSyncRetry()}
-  updatePendingQueueUi(queued?'Nota do Agulha de Ouro guardada neste tablet e aguardando a Central.':'Não foi possível guardar a nota pendente neste tablet.');
+  // Erros 4xx (exceto sessão expirada) são rejeições da requisição, não falhas offline.
+  // Não os enfileirar evita tentativas automáticas repetidas de uma nota que a Central recusou.
+  if(e.status>=400&&e.status<500&&e.status!==401){
+   $('am'+id).textContent='A Central recusou a nota: '+e.message+'. Confira os dados e tente salvar novamente.';
+   updatePendingQueueUi();
+  }else{
+   const latest=getScoringDraft('agulha',id,'score',evaluator)??score,queued=queuePendingScore('agulha',id,'score',evaluator,{value:latest});
+   $('am'+id).textContent=queued?'Falha de conexão. Nota mantida neste tablet e será reenviada automaticamente.':'Erro: '+e.message;
+   if(!e.status||e.status>=500){serverAvailable=false;schedulePendingSyncRetry()}
+   updatePendingQueueUi(queued?'Nota do Agulha de Ouro guardada neste tablet e aguardando a Central.':'Não foi possível guardar a nota pendente neste tablet.');
+  }
  }finally{b.disabled=false}
 }
 $('toggleAgulhaEvaluated').addEventListener('click',()=>{agulhaView=agulhaView==='pending'?'evaluated':'pending';renderAgulha();updatePendingQueueUi()});
