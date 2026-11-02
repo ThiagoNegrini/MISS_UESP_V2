@@ -2,6 +2,18 @@
 const $=id=>document.getElementById(id);let candidates=[],scores={},arrivals={},category='Rainha do Samba',auditionView='pending';let mode='audition',contestCandidates=[],contestScores={},contestCriterion='aesthetics_sympathy',contestView='pending',agulhaResults=[],agulhaView='pending';const contestScoreOptions='<option value="">— Selecione —</option>'+Array.from({length:11},(_,i)=>{const n=(9+i/10).toFixed(1);return `<option value="${n}">${n.replace('.',',')}</option>`}).join('');const params=new URLSearchParams(location.search);if(params.get('categoria')==='passista')category='Passista de Ouro';if(params.get('categoria')==='diva')category='Diva do Samba (Plus Size)';if(params.get('stage')==='agulha')mode='agulha';
 let evaluatorRoster=[];async function loadEvaluatorRoster(){try{let j;if(mode==='agulha')j=await api('/api/agulha/data');else j=await api('/api/evaluators?stage='+(mode==='contest'?'CONCURSO':'AUDICAO'));evaluatorRoster=j.evaluators||[];const saved=localStorage.getItem('uesp_evaluator_name')||'';$('evaluator').innerHTML='<option value="">— Selecione o avaliador —</option>'+evaluatorRoster.map(n=>'<option>'+esc(n)+'</option>').join('');if(evaluatorRoster.includes(saved))$('evaluator').value=saved;}catch(e){$('evaluator').innerHTML='<option value="">Lista de avaliadores indisponível</option>'}}$('evaluator').addEventListener('change',()=>{localStorage.setItem('uesp_evaluator_name',$('evaluator').value.trim());if(mode==='audition')render();else if(mode==='contest')renderContest();else renderAgulha();updatePendingQueueUi()});$('search').addEventListener('input',()=>{if(mode==='audition')render();else if(mode==='contest')renderContest();else renderAgulha();updatePendingQueueUi()});$('refreshAudition').addEventListener('click',async()=>{$('list').innerHTML='<div class="empty">Atualizando lista por ordem de chegada…</div>';try{await load()}catch(e){$('list').innerHTML='<div class="empty">Não foi possível atualizar a lista. Verifique a conexão e tente novamente.</div>'}});$('toggleAudited').addEventListener('click',()=>{auditionView=auditionView==='pending'?'audited':'pending';$('toggleAudited').textContent=auditionView==='pending'?'AUDITADOS':'VER PENDENTES';render();updatePendingQueueUi()});
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}const api=(path,opt={})=>requestJSON(path,opt)
+function syncDeviceId(){try{let id=localStorage.getItem('uesp_sync_device_id');if(!id){id=window.crypto?.randomUUID?window.crypto.randomUUID():'dev-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);localStorage.setItem('uesp_sync_device_id',id)}return id}catch(e){return 'session-'+Math.random().toString(36).slice(2)}}
+let syncReportTimer=null,syncReportInFlight=false;
+function scheduleSyncStatusReport(){clearTimeout(syncReportTimer);syncReportTimer=setTimeout(reportSyncStatus,250)}
+async function reportSyncStatus(){
+ if(!navigator.onLine||syncReportInFlight)return;
+ const counts=new Map(),stageNames={audition:'AUDICAO',contest:'CONCURSO',agulha:'AGULHA'};
+ for(const entry of pendingQueue()){const stage=stageNames[entry.stage];if(!stage||!entry.evaluator)continue;const key=stage+'|'+entry.evaluator;counts.set(key,(counts.get(key)||0)+1)}
+ const pending=Array.from(counts,([key,count])=>{const [stage,evaluator]=key.split('|');return {stage,evaluator,count}});
+ const activeStage=mode==='contest'?'CONCURSO':mode==='agulha'?'AGULHA':'AUDICAO';
+ syncReportInFlight=true;
+ try{await api('/api/evaluator-sync-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:syncDeviceId(),stage:activeStage,evaluator:$('evaluator').value.trim(),pending})})}catch(e){}finally{syncReportInFlight=false}
+}
 async function load(){try{const [c,s,a]=await Promise.all([api('/api/candidates'),api('/api/scores'),api('/api/arrivals')]);candidates=c.candidates||[];scores=s.scores||{};arrivals=a.arrivals||{};serverAvailable=true;$('connection').textContent='Conectado ao notebook. As notas são compartilhadas com a Central.';$('connection').className='status ok';render();updatePendingQueueUi();return true}catch(e){serverAvailable=false;$('connection').textContent='Erro de conexão: '+e.message;$('connection').className='status';updatePendingQueueUi();return false}}function getScore(id){return (scores[String(id)]||{})[$('evaluator').value.trim()]||{}}
 function draftKey(id,evaluator=$('evaluator').value.trim()){return 'uesp_draft_'+evaluator.toLocaleLowerCase('pt-BR')+'_'+id}
 function getDraft(id,evaluator=$('evaluator').value.trim()){try{return JSON.parse(localStorage.getItem(draftKey(id,evaluator))||'{}')}catch(e){return {}}}
@@ -86,13 +98,14 @@ function refreshVisibleNoteIndicators(){
 }
 function updatePendingQueueUi(message=''){
  const queue=pendingQueue(),status=$('offlineSyncStatus'),button=$('syncPendingScores');
- if(!status||!button){refreshVisibleNoteIndicators();return}
+ if(!status||!button){refreshVisibleNoteIndicators();scheduleSyncStatusReport();return}
  button.hidden=!queue.length;button.disabled=syncInFlight||!navigator.onLine;
  status.hidden=!queue.length&&!message;
  if(message)status.textContent=message;
  else if(!queue.length)status.textContent='';
  else{const incomplete=queue.filter(item=>item.stage==='audition'&&!item.allow_partial&&(!item.communication||!item.samba)).length;status.textContent=serverAvailable?`${queue.length} rascunho(s) neste tablet aguardando sincronização.${incomplete?' Complete Comunicação e Samba para enviar automaticamente.':''}`:`${queue.length} rascunho(s) guardado(s) neste tablet. Serão enviados quando a conexão com a Central voltar.${incomplete?' Complete Comunicação e Samba para envio automático.':''}`}
  refreshVisibleNoteIndicators();
+ scheduleSyncStatusReport();
 }
 async function savePendingEntry(entry){
  if(entry.stage==='audition'){
@@ -237,6 +250,7 @@ async function saveContest(id,criterion,b){
 }
 if(mode==='agulha')setMode('agulha');else{loadEvaluatorRoster();load();if(mode==='contest')setMode('contest')}
 updatePendingQueueUi();if(pendingQueue().length&&navigator.onLine)setTimeout(probeAndSyncPendingScores,500);
+scheduleSyncStatusReport();setInterval(scheduleSyncStatusReport,10000);window.addEventListener('online',scheduleSyncStatusReport);
 window.addEventListener('focus',()=>{if(pendingQueue().length)probeAndSyncPendingScores()});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&pendingQueue().length)probeAndSyncPendingScores()});
 // A lista do Concurso não é recarregada automaticamente durante a digitação para preservar a seleção das notas e a visualização de JÁ AVALIADAS.

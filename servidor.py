@@ -36,6 +36,8 @@ CONTEST_SCHEMA_READY=False
 API_CONDITION=threading.Condition()
 ACTIVE_API_REQUESTS=0
 DATABASE_MAINTENANCE=False
+SCORE_SYNC_REPORTS={}
+SCORE_SYNC_REPORTS_LOCK=threading.Lock()
 
 def dbconn(database=AUDITION_DB):
     """Abre o banco solicitado sem criar tabelas da Audição no banco do Concurso."""
@@ -536,6 +538,15 @@ class Handler(SimpleHTTPRequestHandler):
             with dbconn(AUDITION_DB) as con:
                 row=con.execute("SELECT setting_value FROM app_settings WHERE setting_key='active_stage'").fetchone()
             return self.send_json({"ok":True,"stage":row["setting_value"] if row else "AUDICAO"})
+        if path=="/api/evaluator-sync-status":
+            now=time.time()
+            with SCORE_SYNC_REPORTS_LOCK:
+                for device_id,report in list(SCORE_SYNC_REPORTS.items()):
+                    retention=24*60*60 if report["pending_total"] else 90
+                    if now-report["last_seen"]>retention: SCORE_SYNC_REPORTS.pop(device_id,None)
+                reports=[dict(report) for report in SCORE_SYNC_REPORTS.values() if report["pending_total"]]
+            reports.sort(key=lambda report:(report["stage"],report["evaluator"].casefold(),report["device"]))
+            return self.send_json({"ok":True,"reports":reports,"observed_at":now})
         if path=="/api/evaluators":
             from urllib.parse import parse_qs
             stage=(parse_qs(urlparse(self.path).query).get("stage",["AUDICAO"])[0] or "AUDICAO").upper()
@@ -769,6 +780,38 @@ class Handler(SimpleHTTPRequestHandler):
                 con.execute("INSERT INTO app_settings(setting_key,setting_value) VALUES('active_stage',?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",(stage,))
                 con.commit()
             return self.send_json({"ok":True,"stage":stage})
+        if path=="/api/evaluator-sync-status":
+            try: data=self.read_json()
+            except Exception as e: return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)
+            device_id=str(data.get("device_id","")).strip()
+            stage=str(data.get("stage","")).strip().upper()
+            evaluator=" ".join(str(data.get("evaluator","")).split())
+            pending=data.get("pending",[])
+            if not device_id or len(device_id)>80 or not all(ch.isalnum() or ch in "-_" for ch in device_id):
+                return self.send_json({"ok":False,"error":"Identificador do tablet inválido."},400)
+            if stage not in ("AUDICAO","CONCURSO","AGULHA") or len(evaluator)>80 or not isinstance(pending,list) or len(pending)>300:
+                return self.send_json({"ok":False,"error":"Etapa, avaliador ou fila inválida."},400)
+            clean_pending=[]
+            for item in pending:
+                if not isinstance(item,dict): return self.send_json({"ok":False,"error":"Resumo de pendências inválido."},400)
+                item_stage=str(item.get("stage","")).strip().upper()
+                item_evaluator=" ".join(str(item.get("evaluator","")).split())
+                try: count=int(item.get("count",0))
+                except (TypeError,ValueError): return self.send_json({"ok":False,"error":"Quantidade pendente inválida."},400)
+                if item_stage not in ("AUDICAO","CONCURSO","AGULHA") or not item_evaluator or len(item_evaluator)>80 or count<1 or count>50000:
+                    return self.send_json({"ok":False,"error":"Resumo de pendências inválido."},400)
+                clean_pending.append({"stage":item_stage,"evaluator":item_evaluator,"count":count})
+            now=time.time()
+            report={"device":"Tablet-"+device_id[-6:].upper(),"stage":stage,"evaluator":evaluator,"pending":clean_pending,"pending_total":sum(item["count"] for item in clean_pending),"last_seen":now}
+            with SCORE_SYNC_REPORTS_LOCK:
+                for old_id,old_report in list(SCORE_SYNC_REPORTS.items()):
+                    retention=24*60*60 if old_report["pending_total"] else 90
+                    if now-old_report["last_seen"]>retention: SCORE_SYNC_REPORTS.pop(old_id,None)
+                if device_id not in SCORE_SYNC_REPORTS and len(SCORE_SYNC_REPORTS)>=500:
+                    oldest=min(SCORE_SYNC_REPORTS,key=lambda key:SCORE_SYNC_REPORTS[key]["last_seen"])
+                    SCORE_SYNC_REPORTS.pop(oldest,None)
+                SCORE_SYNC_REPORTS[device_id]=report
+            return self.send_json({"ok":True,"pending_total":report["pending_total"]})
         if path=="/api/evaluators":
             try: data=self.read_json()
             except Exception as e: return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)

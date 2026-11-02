@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Central de Controle — MISS UESP</title>
-<link rel="stylesheet" href="assets/css/central.css">
+<link rel="stylesheet" href="assets/css/central.css?v=20261101-score-progress">
   <link rel="stylesheet" href="assets/css/uesp-glass.css"></head>
 <body>
 <header>
@@ -36,6 +36,17 @@
    <div class="category"><div><b>Diva do Samba (Plus Size)</b><br><span>Lista de candidatos</span></div><b>—</b></div>
   </div>
  </div>
+</section>
+<section class="card score-progress-panel" aria-labelledby="scoreProgressTitle">
+ <div class="score-progress-heading"><div><h2 id="scoreProgressTitle">Progresso das avaliações por avaliador</h2><p id="scoreProgressHelp" class="help">Notas recebidas, pendentes e estado de sincronização dos tablets.</p></div><div class="score-progress-controls"><label for="scoreProgressStage">Etapa:</label><select id="scoreProgressStage"><option value="AUDICAO">Audição</option><option value="CONCURSO">Concurso</option><option value="AGULHA">Agulha de Ouro</option></select><span id="scoreProgressUpdated" class="sub" aria-live="polite">Atualizando…</span></div></div>
+ <div class="score-progress-stats">
+  <div class="score-progress-stat"><span>Notas recebidas</span><strong id="scoreNotesReceived">—</strong></div>
+  <div class="score-progress-stat"><span>Notas que faltam</span><strong id="scoreNotesMissing">—</strong></div>
+  <div class="score-progress-stat"><span>Tablets com pendências reportadas</span><strong id="scorePendingDevices">—</strong></div>
+ </div>
+ <div class="tablewrap score-progress-table"><table><thead><tr><th>Avaliador(a)</th><th>Notas recebidas</th><th>Faltam</th><th>Parciais</th><th>Progresso</th></tr></thead><tbody id="scoreProgressRows"><tr><td colspan="5">Carregando progresso…</td></tr></tbody></table></div>
+ <div id="pendingDeviceDetails" class="pending-device-details" aria-live="polite"></div>
+ <p class="help sync-report-note">Os tablets enviam o estado da fila quando estão conectados. Notas feitas enquanto estiverem sem conexão aparecem aqui após a reconexão.</p>
 </section>
 <section class="card shortcuts-panel" style="margin-top:16px">
  <h2>Atalhos do sistema</h2>
@@ -98,4 +109,4 @@
  <div id="clearContestStatus" class="status">A exclusão só será executada após confirmação.</div>
 </section>
 </main><footer>Criado por: Thiago A Negrini® • Central de Controle UESP 2026</footer>
-<script src="assets/js/api.js"></script><script src="assets/js/central.js"></script></body></html>
+<script src="assets/js/api.js"></script><script src="assets/js/central.js?v=20261101-score-progress"></script></body></html>

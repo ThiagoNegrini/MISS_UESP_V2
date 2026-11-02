@@ -6,6 +6,9 @@ let auditionScores={};
 let contestScores={};
 let evaluatorRoster=[];
 let contestEvaluatorRoster=[];
+let contestCandidates=[];
+let evaluatorSyncReports=[];
+let agulhaProgressData={evaluators:[],results:[]};
 const $=id=>document.getElementById(id);
 const api=(path,options={})=>requestJSON(path,options)
 async function loadRoster(){try{const stage=$('rosterStage').value;const j=await api('/api/evaluators?stage='+stage);$('rosterNames').value=(j.evaluators||[]).join('\n');$('rosterStatus').textContent='Lista '+stage+' carregada ('+(j.evaluators||[]).length+' avaliador(es)).'}catch(e){$('rosterStatus').textContent='Falha ao carregar lista: '+e.message}}
@@ -15,9 +18,8 @@ async function refresh(){
  if(refreshInFlight||document.visibilityState==='hidden')return;
  refreshInFlight=true;
  try{
-   const stage=$('globalStage')?.value==='concurso'?'CONCURSO':'AUDICAO';
-   const [d,c,a,s,e,contest,contestEvaluators]=await Promise.all([api('/api/arrival-candidates'),api('/api/candidates'),api('/api/arrivals'),api('/api/scores'),api('/api/evaluators?stage='+stage),api('/api/contest-candidates'),api('/api/evaluators?stage=CONCURSO')]);
-   previewRows=d.candidates||[]; auditionCandidates=c.candidates||[]; arrivalData=a.arrivals||{}; auditionScores=s.scores||{}; contestScores=contest.scores||{}; evaluatorRoster=e.evaluators||[]; contestEvaluatorRoster=contestEvaluators.evaluators||[]; render();
+   const [d,c,a,s,e,contest,contestEvaluators,sync,agulha]=await Promise.all([api('/api/arrival-candidates'),api('/api/candidates'),api('/api/arrivals'),api('/api/scores'),api('/api/evaluators?stage=AUDICAO'),api('/api/contest-candidates'),api('/api/evaluators?stage=CONCURSO'),api('/api/evaluator-sync-status').catch(()=>({reports:[]})),api('/api/agulha/data')]);
+   previewRows=d.candidates||[]; auditionCandidates=c.candidates||[]; arrivalData=a.arrivals||{}; auditionScores=s.scores||{}; contestScores=contest.scores||{}; contestCandidates=contest.candidates||[]; evaluatorRoster=e.evaluators||[]; contestEvaluatorRoster=contestEvaluators.evaluators||[]; evaluatorSyncReports=sync.reports||[]; agulhaProgressData=agulha||{evaluators:[],results:[]}; render();renderScoreProgress();
    const presentes=previewRows.filter(x=>arrivalFor(x)).length;
    $('dbStatus').textContent='Banco local conectado. '+previewRows.length+' participante(s) cadastrado(s); '+((contest.candidates||[]).length)+' classificado(s) para o Concurso; '+presentes+' chegada(s) confirmada(s). Sincronização automática ativa.';
  }catch(e){$('dbStatus').textContent='Não foi possível atualizar o painel: '+e.message+'. Confirme que a Central está aberta pelo endereço do servidor local.'}
@@ -79,6 +81,38 @@ function render(){
    $('rows').innerHTML=grouped.map(group=>`<tr class="category-group"><td colspan="6" style="background:#fff5f5;color:#a50d25;font-weight:800;border-top:2px solid #e5b7be">${esc(group.category)} — ${group.items.length} participante(s)</td></tr>`+group.items.map(x=>{const a=arrivalFor(x);rowNumber++;return `<tr><td>${rowNumber}</td><td>${esc(normCategory(x.category))}</td><td>${esc(x.name)}</td><td><span class="presence ${a?'yes':'no'}">${a?'Presente':'Aguardando'}</span></td><td>${a?esc(formatTime(a.arrived_at)):'—'}</td><td>${a?esc(a.device||'—'):'—'}</td></tr>`}).join('')).join('');
  }
 }
+function renderScoreProgress(){
+ const stage=$('scoreProgressStage')?.value||'AUDICAO';
+ const roster=stage==='CONCURSO'?contestEvaluatorRoster:stage==='AGULHA'?(agulhaProgressData.evaluators||[]):evaluatorRoster;
+ const source=stage==='CONCURSO'?contestCandidates:stage==='AGULHA'?(agulhaProgressData.results||[]):auditionCandidates;
+ const candidates=source.filter(candidate=>stage==='AGULHA'||(()=>{const arrival=arrivalFor(candidate);return !!arrival&&String(arrival.status||'PRESENTE').toUpperCase()!=='AUSENTE'})());
+ const scores=stage==='CONCURSO'?contestScores:stage==='AGULHA'?{}:auditionScores;
+ const criteriaFor=candidate=>{
+  if(stage==='AUDICAO')return ['communication','samba'];
+  if(stage==='AGULHA')return ['score'];
+  const category=candidateCategory(candidate);
+  return category==='Passista de Ouro'?['communication_elegance','samba']:['aesthetics_sympathy','communication_elegance','samba'];
+ };
+ const progress=roster.map(evaluator=>{
+  let expected=0,received=0,partial=0;
+  for(const candidate of candidates){
+   const criteria=criteriaFor(candidate),saved=stage==='AGULHA'?{score:candidate.scores?.[evaluator]}:((scores[String(candidate.id)]||{})[evaluator]||{});
+   expected+=criteria.length;
+   const count=criteria.filter(name=>saved[name]!==null&&saved[name]!==undefined&&String(saved[name]).trim()!=='').length;
+   received+=count;if(count>0&&count<criteria.length)partial++;
+  }
+  return {evaluator,expected,received,missing:Math.max(0,expected-received),partial,percent:expected?Math.min(100,Math.round(received*100/expected)):0};
+ });
+ const expected=progress.reduce((sum,row)=>sum+row.expected,0),received=progress.reduce((sum,row)=>sum+row.received,0),missing=Math.max(0,expected-received);
+ $('scoreNotesReceived').textContent=received.toLocaleString('pt-BR');$('scoreNotesMissing').textContent=missing.toLocaleString('pt-BR');
+ $('scoreProgressHelp').textContent=stage==='CONCURSO'?'Notas recebidas e pendentes nos critérios aplicáveis aos participantes presentes do Concurso.':stage==='AGULHA'?'Notas de vestido/roupa recebidas e pendentes entre as participantes elegíveis do Agulha de Ouro.':'Notas de Comunicação e Samba recebidas e pendentes entre participantes presentes na Audição.';
+ $('scoreProgressUpdated').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+ $('scoreProgressRows').innerHTML=progress.length?progress.map(row=>`<tr><td><strong>${esc(row.evaluator)}</strong></td><td>${row.received} / ${row.expected}</td><td>${row.missing}</td><td>${row.partial}</td><td><div class="evaluator-progress"><progress max="100" value="${row.percent}">${row.percent}%</progress><span>${row.percent}%</span></div></td></tr>`).join(''):'<tr><td colspan="5">Nenhum avaliador cadastrado nesta etapa.</td></tr>';
+ const matching=evaluatorSyncReports.map(report=>({...report,pending:(report.pending||[]).filter(item=>item.stage===stage)})).filter(report=>report.pending.length);
+ const pendingDevices=new Set(matching.map(report=>report.device)).size,pendingNotes=matching.reduce((sum,report)=>sum+report.pending.reduce((n,item)=>n+Number(item.count||0),0),0);
+ $('scorePendingDevices').textContent=pendingDevices.toLocaleString('pt-BR');
+ $('pendingDeviceDetails').innerHTML=matching.length?'<h3>Tablets com notas aguardando sincronização</h3><ul>'+matching.map(report=>{const details=report.pending.map(item=>`${item.stage==='CONCURSO'?'Concurso':item.stage==='AGULHA'?'Agulha de Ouro':'Audição'} — ${esc(item.evaluator)}: ${Number(item.count).toLocaleString('pt-BR')} registro(s) de nota`).join(' · '),age=Math.max(0,Math.floor(Date.now()/1000-Number(report.last_seen||0))),lastSeen=age<60?`há ${age} s`:`há ${Math.floor(age/60)} min`;return `<li><strong>${esc(report.device)}</strong> — ${details}<span>Último contato ${lastSeen}</span></li>`}).join('')+'</ul><p class="help">'+pendingNotes.toLocaleString('pt-BR')+' registro(s) de nota ainda não confirmados pelo banco da Central.</p>':'<p class="help">Nenhum tablet está reportando notas pendentes nesta etapa.</p>';
+}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 $('file').addEventListener('change',()=>{$('importBtn').disabled=!$('file').files.length;$('importStatus').textContent=$('file').files.length?'Arquivo selecionado: '+$('file').files[0].name:'Aguardando arquivo Excel.'});
 $('importBtn').addEventListener('click',async()=>{
@@ -89,8 +123,9 @@ $('importBtn').addEventListener('click',async()=>{
  catch(e){$('importStatus').textContent='Falha na importação: '+e.message}finally{$('importBtn').disabled=false}
 });
 $('refreshBtn').addEventListener('click',refresh);$('filter').addEventListener('change',render);if($('candidateSearch'))$('candidateSearch').addEventListener('input',render);
-async function applyGlobalStage(stage,persist=true){$('globalStage').value=stage;const rosterStage=$('rosterStage');if(rosterStage){rosterStage.value=stage.toUpperCase();loadRoster()}const link=$('evaluatorLink');link.href='avaliador.html?stage='+encodeURIComponent(stage);link.textContent='Abrir avaliador — '+(stage==='concurso'?'Concurso':'Audição');document.querySelector('header small').textContent=(stage==='concurso'?'CONCURSO':'AUDIÇÃO')+' MISS UESP • CARNAVAL 2027';try{localStorage.setItem('uesp_active_stage',stage)}catch(e){};render();if(persist){try{const response=await api('/api/active-stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:stage==='concurso'?'CONCURSO':'AUDICAO'})});if(response.stage!==(stage==='concurso'?'CONCURSO':'AUDICAO'))throw new Error('O servidor retornou uma etapa diferente.');$('dbStatus').textContent='Etapa '+(stage==='concurso'?'Concurso':'Audição')+' sincronizada com o servidor.'}catch(e){$('dbStatus').textContent='ERRO ao sincronizar etapa: '+e.message+' — confira se a Central está aberta pelo mesmo endereço do servidor.'}}}
+async function applyGlobalStage(stage,persist=true){$('globalStage').value=stage;$('scoreProgressStage').value=stage.toUpperCase();const rosterStage=$('rosterStage');if(rosterStage){rosterStage.value=stage.toUpperCase();loadRoster()}const link=$('evaluatorLink');link.href='avaliador.html?stage='+encodeURIComponent(stage);link.textContent='Abrir avaliador — '+(stage==='concurso'?'Concurso':'Audição');document.querySelector('header small').textContent=(stage==='concurso'?'CONCURSO':'AUDIÇÃO')+' MISS UESP • CARNAVAL 2027';try{localStorage.setItem('uesp_active_stage',stage)}catch(e){};render();renderScoreProgress();if(persist){try{const response=await api('/api/active-stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:stage==='concurso'?'CONCURSO':'AUDICAO'})});if(response.stage!==(stage==='concurso'?'CONCURSO':'AUDICAO'))throw new Error('O servidor retornou uma etapa diferente.');$('dbStatus').textContent='Etapa '+(stage==='concurso'?'Concurso':'Audição')+' sincronizada com o servidor.'}catch(e){$('dbStatus').textContent='ERRO ao sincronizar etapa: '+e.message+' — confira se a Central está aberta pelo mesmo endereço do servidor.'}}}
 $('globalStage').addEventListener('change',()=>applyGlobalStage($('globalStage').value,true));
+$('scoreProgressStage').addEventListener('change',renderScoreProgress);
 (async()=>{try{const current=await api('/api/active-stage');await applyGlobalStage(String(current.stage||'AUDICAO').toLowerCase()==='concurso'?'concurso':'audicao',false)}catch(e){console.warn('Não foi possível carregar a etapa do servidor:',e)}})();if($('presenceFilter')) $('presenceFilter').addEventListener('change',render);
 
 $('clearContestBtn').addEventListener('click',async()=>{
