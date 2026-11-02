@@ -3,7 +3,7 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from http.cookies import SimpleCookie
 from urllib.parse import unquote, urlparse, urlsplit
-import hmac, os, secrets, sqlite3, json, socket, io, time
+import hmac, os, secrets, sqlite3, json, socket, io, time, threading
 from pathlib import Path
 from email.parser import BytesParser
 from email.policy import default
@@ -13,6 +13,9 @@ HERE=Path(__file__).resolve().parent
 AUDITION_DB=HERE/"banco_audicao.db"
 CONTEST_DB=HERE/"banco_concurso.db"
 AGULHA_DB=HERE/"banco_agulha_ouro.db"
+DATABASES=(AUDITION_DB,CONTEST_DB,AGULHA_DB)
+BACKUP_DIR=HERE/"backup de banco"
+BACKUP_SET_RETENTION=30
 CATEGORIES=["Rainha do Samba","Passista de Ouro","Diva do Samba (Plus Size)"]
 PIN_FILE=HERE/"UESP_ACCESS_PIN.txt"
 def load_access_pin():
@@ -30,6 +33,9 @@ ACCESS_PIN,ACCESS_PIN_SOURCE=load_access_pin()
 SESSIONS={}
 DB_SCHEMAS_READY=set()
 CONTEST_SCHEMA_READY=False
+API_CONDITION=threading.Condition()
+ACTIVE_API_REQUESTS=0
+DATABASE_MAINTENANCE=False
 
 def dbconn(database=AUDITION_DB):
     """Abre o banco solicitado sem criar tabelas da Audição no banco do Concurso."""
@@ -274,14 +280,13 @@ def ensure_agulha_publication_version(con):
         con.execute("INSERT INTO app_settings(setting_key,setting_value) VALUES('released','0') "
             "ON CONFLICT(setting_key) DO UPDATE SET setting_value='0'")
 
-def backup_database(database,reason="pre_import"):
+def backup_database(database,reason="pre_import",stamp=None):
     """Create a consistent SQLite snapshot in the local database backup folder."""
     if not database.exists():
         return None
-    backup_dir=HERE/"backup de banco"
-    backup_dir.mkdir(exist_ok=True)
-    stamp=datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
-    destination=backup_dir/(database.stem+"_"+reason+"_"+stamp+".db")
+    BACKUP_DIR.mkdir(exist_ok=True)
+    stamp=stamp or datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
+    destination=BACKUP_DIR/(database.stem+"_"+reason+"_"+stamp+".db")
     try:
         with sqlite3.connect(database,timeout=15) as source, sqlite3.connect(destination) as target:
             source.backup(target)
@@ -292,19 +297,118 @@ def backup_database(database,reason="pre_import"):
         raise
     return destination
 
-def backup_all_databases(reason="limpeza_total"):
-    """Back up every application database before clearing operational data."""
-    databases=(AUDITION_DB,CONTEST_DB,AGULHA_DB)
-    missing=[database.name for database in databases if not database.is_file()]
+def backup_all_databases(reason="limpeza_total",protected=()):
+    """Back up all application databases as one named and restorable set."""
+    BACKUP_DIR.mkdir(exist_ok=True)
+    missing=[database.name for database in DATABASES if not database.is_file()]
     if missing:
         raise FileNotFoundError("Banco(s) não encontrado(s): "+", ".join(missing))
-    backups=[]
-    for database in databases:
-        backup=backup_database(database,reason)
-        if backup is None:
-            raise FileNotFoundError("Não foi possível criar backup de "+database.name)
-        backups.append(backup)
-    return backups
+    stamp=datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%f")
+    files={}
+    temporary=None
+    try:
+        for database in DATABASES:
+            backup=backup_database(database,reason,stamp)
+            if backup is None:
+                raise FileNotFoundError("Não foi possível criar backup de "+database.name)
+            files[database.name]=backup.name
+        created_at=datetime.now().astimezone().isoformat(timespec="seconds")
+        manifest={"id":stamp,"created_at":created_at,"reason":reason,"files":files}
+        manifest_path=BACKUP_DIR/("backup_set_"+stamp+".json")
+        temporary=manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
+        os.replace(temporary,manifest_path)
+    except Exception:
+        for filename in files.values():
+            (BACKUP_DIR/filename).unlink(missing_ok=True)
+        if temporary is not None: temporary.unlink(missing_ok=True)
+        raise
+    prune_backup_sets(protected=protected)
+    return manifest
+
+def valid_backup_set_id(value):
+    return (isinstance(value,str) and len(value)==26 and value[4]=="-" and value[7]=="-"
+        and value[10]=="_" and value[13]=="-" and value[16]=="-" and value[19]=="_"
+        and value[:4].isdigit() and value[5:7].isdigit() and value[8:10].isdigit()
+        and value[11:13].isdigit() and value[14:16].isdigit() and value[17:19].isdigit()
+        and value[20:].isdigit())
+
+def read_backup_set(set_id):
+    if not valid_backup_set_id(set_id):
+        raise ValueError("Identificador do backup inválido.")
+    manifest_path=BACKUP_DIR/("backup_set_"+set_id+".json")
+    manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest,dict) or manifest.get("id")!=set_id or not isinstance(manifest.get("files"),dict) or set(manifest["files"])!={database.name for database in DATABASES}:
+        raise ValueError("O conjunto não contém os três bancos esperados.")
+    for database in DATABASES:
+        filename=manifest["files"][database.name]
+        if not isinstance(filename,str) or not filename.startswith(database.stem+"_") or not filename.endswith(".db"):
+            raise ValueError("O arquivo não corresponde ao banco esperado: "+database.name)
+        candidate=(BACKUP_DIR/filename).resolve()
+        if Path(filename).name!=filename or candidate.parent!=BACKUP_DIR.resolve() or not candidate.is_file():
+            raise FileNotFoundError("Arquivo de backup ausente ou inválido: "+str(filename))
+    return manifest
+
+def list_backup_sets():
+    if not BACKUP_DIR.is_dir(): return []
+    sets=[]
+    for manifest_path in BACKUP_DIR.glob("backup_set_*.json"):
+        set_id=manifest_path.stem.removeprefix("backup_set_")
+        try:
+            manifest=read_backup_set(set_id)
+            size=sum((BACKUP_DIR/name).stat().st_size for name in manifest["files"].values())
+            sets.append({"id":set_id,"created_at":manifest.get("created_at"),"reason":manifest.get("reason","backup"),"size_bytes":size})
+        except (OSError,ValueError,TypeError,json.JSONDecodeError):
+            continue
+    return sorted(sets,key=lambda item:(item.get("created_at") or "",item["id"]),reverse=True)
+
+def prune_backup_sets(protected=()):
+    """Keep the most recent complete sets, plus any set being restored."""
+    available=list_backup_sets()
+    keep=set(protected)
+    for item in available:
+        if item["id"] in keep: continue
+        if len(keep)>=BACKUP_SET_RETENTION: break
+        keep.add(item["id"])
+    for item in available:
+        if item["id"] in keep: continue
+        try:
+            manifest=read_backup_set(item["id"])
+            for filename in manifest["files"].values():
+                (BACKUP_DIR/filename).unlink(missing_ok=True)
+            (BACKUP_DIR/("backup_set_"+item["id"]+".json")).unlink(missing_ok=True)
+        except (OSError,ValueError,TypeError,json.JSONDecodeError):
+            continue
+
+def restore_database_snapshot(source_path,database):
+    with sqlite3.connect(source_path,timeout=30) as source, sqlite3.connect(database,timeout=30) as target:
+        integrity=source.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity!="ok": raise sqlite3.DatabaseError("Backup inválido: "+str(source_path.name))
+        source.backup(target)
+        integrity=target.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity!="ok": raise sqlite3.DatabaseError("Restauração inválida para "+database.name)
+
+def restore_backup_set(set_id):
+    manifest=read_backup_set(set_id)
+    for database in DATABASES:
+        with sqlite3.connect(BACKUP_DIR/manifest["files"][database.name],timeout=30) as source:
+            if source.execute("PRAGMA integrity_check").fetchone()[0]!="ok":
+                raise sqlite3.DatabaseError("Backup inválido: "+manifest["files"][database.name])
+    current=backup_all_databases("antes_restauracao",protected=(set_id,))
+    try:
+        for database in DATABASES:
+            restore_database_snapshot(BACKUP_DIR/manifest["files"][database.name],database)
+    except Exception as restore_error:
+        rollback_errors=[]
+        for database in DATABASES:
+            try:
+                restore_database_snapshot(BACKUP_DIR/current["files"][database.name],database)
+            except Exception as rollback_error:
+                rollback_errors.append(database.name+": "+str(rollback_error))
+        if rollback_errors:
+            raise RuntimeError("Falha na restauração e na recuperação do estado anterior. Backup de recuperação "+current["id"]+"; erros: "+"; ".join(rollback_errors)) from restore_error
+        raise RuntimeError("Restauração cancelada; o estado anterior foi recuperado. Backup de recuperação: "+current["id"]+". Detalhe: "+str(restore_error)) from restore_error
+    return {"restored_set_id":set_id,"recovery_set_id":current["id"]}
 
 def clear_all_database_data():
     """Clear every user table across the three databases in one SQLite transaction."""
@@ -340,6 +444,31 @@ def clear_all_database_data():
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*a,**kw): super().__init__(*a,directory=str(HERE),**kw)
+    def _enter_api_request(self):
+        global ACTIVE_API_REQUESTS
+        with API_CONDITION:
+            while DATABASE_MAINTENANCE: API_CONDITION.wait()
+            ACTIVE_API_REQUESTS+=1
+            self._maintenance_released=False
+    def _leave_api_request(self):
+        global ACTIVE_API_REQUESTS
+        if getattr(self,"_maintenance_released",False): return
+        with API_CONDITION:
+            ACTIVE_API_REQUESTS=max(0,ACTIVE_API_REQUESTS-1)
+            API_CONDITION.notify_all()
+    def _begin_database_maintenance(self):
+        global ACTIVE_API_REQUESTS,DATABASE_MAINTENANCE
+        with API_CONDITION:
+            ACTIVE_API_REQUESTS=max(0,ACTIVE_API_REQUESTS-1)
+            self._maintenance_released=True
+            while DATABASE_MAINTENANCE: API_CONDITION.wait()
+            DATABASE_MAINTENANCE=True
+            while ACTIVE_API_REQUESTS: API_CONDITION.wait()
+    def _end_database_maintenance(self):
+        global DATABASE_MAINTENANCE
+        with API_CONDITION:
+            DATABASE_MAINTENANCE=False
+            API_CONDITION.notify_all()
     def translate_path(self,path):
         """Serve only application pages and local assets, never databases or source files."""
         route=unquote(urlparse(path).path).lstrip("/")
@@ -392,11 +521,17 @@ class Handler(SimpleHTTPRequestHandler):
         if length<0 or length>9*1024*1024: raise ValueError("Requisição muito grande.")
         return json.loads(self.rfile.read(length).decode("utf-8"))
     def do_GET(self):
+        self._enter_api_request()
+        try: return self._do_GET()
+        finally: self._leave_api_request()
+    def _do_GET(self):
         path=urlparse(self.path).path
         if path not in ("/login.html","/api/health") and not self.is_authenticated():
             if path.startswith("/api/"): return self.send_json({"ok":False,"error":"Acesso não autenticado. Entre com o código do servidor."},401)
             self.send_response(303);self.send_header("Location","/login.html");self.end_headers();return
         if path=="/api/health": return self.send_json({"ok":True,"service":"UESP 2027"})
+        if path=="/api/backups":
+            return self.send_json({"ok":True,"sets":list_backup_sets(),"retention":BACKUP_SET_RETENTION})
         if path=="/api/active-stage":
             with dbconn(AUDITION_DB) as con:
                 row=con.execute("SELECT setting_value FROM app_settings WHERE setting_key='active_stage'").fetchone()
@@ -594,6 +729,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"ok":True,"results":out})
         return super().do_GET()
     def do_POST(self):
+        self._enter_api_request()
+        try: return self._do_POST()
+        finally: self._leave_api_request()
+    def _do_POST(self):
         path=urlparse(self.path).path
         if path!="/api/login" and not self.is_authenticated():
             return self.send_json({"ok":False,"error":"Sessão encerrada. Entre novamente com o código do servidor."},401)
@@ -686,15 +825,38 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"ok":False,"error":"Confirmação inválida: "+str(e)},400)
             if not isinstance(data,dict) or data.get("confirm") is not True:
                 return self.send_json({"ok":False,"error":"A limpeza total exige confirmação explícita."},400)
+            self._begin_database_maintenance()
+            backups=None
             try:
                 backups=backup_all_databases("antes_limpeza_total")
-            except Exception as e:
-                return self.send_json({"ok":False,"error":"Limpeza cancelada: não foi possível criar todos os backups; nenhum dado foi apagado. Detalhe: "+str(e)},500)
-            try:
                 deleted=clear_all_database_data()
-                return self.send_json({"ok":True,"deleted_records":sum(deleted.values()),"deleted_tables":deleted,"backups":[backup.name for backup in backups],"message":"Os três bancos foram limpos e estão prontos para uma nova lista e uma nova Audição/Concurso."})
+                result={"ok":True,"deleted_records":sum(deleted.values()),"deleted_tables":deleted,
+                    "backup_set_id":backups["id"],"backups":list(backups["files"].values()),
+                    "message":"Os três bancos foram limpos e estão prontos para uma nova lista e uma nova Audição/Concurso."}
             except Exception as e:
-                return self.send_json({"ok":False,"error":"Falha na limpeza total. Os backups foram criados e podem ser restaurados: "+", ".join(backup.name for backup in backups)+". Detalhe: "+str(e)},500)
+                if backups is None:
+                    result={"ok":False,"error":"Limpeza cancelada: não foi possível criar todos os backups; nenhum dado foi apagado. Detalhe: "+str(e)}
+                else:
+                    result={"ok":False,"error":"Falha na limpeza total. O conjunto de backup "+backups["id"]+" permanece disponível para recuperação. Detalhe: "+str(e)}
+            finally:
+                self._end_database_maintenance()
+            return self.send_json(result,200 if result["ok"] else 500)
+        if path=="/api/restore-backup":
+            try:
+                data=self.read_json()
+            except Exception as e:
+                return self.send_json({"ok":False,"error":"Dados inválidos: "+str(e)},400)
+            if not isinstance(data,dict) or data.get("confirm") is not True or not valid_backup_set_id(data.get("backup_set_id")):
+                return self.send_json({"ok":False,"error":"Selecione um conjunto completo e confirme a restauração."},400)
+            self._begin_database_maintenance()
+            try:
+                restored=restore_backup_set(data["backup_set_id"])
+                result={"ok":True,**restored}
+            except Exception as e:
+                result={"ok":False,"error":str(e)}
+            finally:
+                self._end_database_maintenance()
+            return self.send_json(result,200 if result["ok"] else 500)
         if path=="/api/publish-audition-results":
             try:
                 data=self.read_json()
@@ -943,13 +1105,21 @@ class Handler(SimpleHTTPRequestHandler):
                 rows.append((cat,name))
             wb.close()
             if not rows:return self.send_json({"ok":False,"error":"Nenhum candidato válido nas colunas A e B."},400)
-            backup_path=backup_database(AUDITION_DB)
-            with dbconn() as con:
-                # Reimportação substitui candidatos e limpa presenças antigas para evitar associação incorreta.
-                con.execute("DELETE FROM arrivals");con.execute("DELETE FROM scores");con.execute("DELETE FROM audition_result_publication");con.execute("DELETE FROM candidates")
-                con.executemany("INSERT OR IGNORE INTO candidates(category,name) VALUES (?,?)",rows);con.commit()
-                grouped=con.execute("SELECT category,COUNT(*) n FROM candidates GROUP BY category").fetchall()
-            return self.send_json({"ok":True,"imported":sum(x["n"] for x in grouped),"counts":{x["category"]:x["n"] for x in grouped},"skipped":skipped,"backup":backup_path.name if backup_path else None})
+            self._begin_database_maintenance()
+            try:
+                backup_set=backup_all_databases("antes_reimportacao")
+                with dbconn() as con:
+                    # Reimportação substitui candidatos e limpa presenças antigas para evitar associação incorreta.
+                    con.execute("DELETE FROM arrivals");con.execute("DELETE FROM scores");con.execute("DELETE FROM audition_result_publication");con.execute("DELETE FROM candidates")
+                    con.executemany("INSERT OR IGNORE INTO candidates(category,name) VALUES (?,?)",rows);con.commit()
+                    grouped=con.execute("SELECT category,COUNT(*) n FROM candidates GROUP BY category").fetchall()
+                result={"ok":True,"imported":sum(x["n"] for x in grouped),"counts":{x["category"]:x["n"] for x in grouped},"skipped":skipped,"backup":backup_set["files"][AUDITION_DB.name],"backup_set_id":backup_set["id"]}
+                status=200
+            except Exception as e:
+                result={"ok":False,"error":"Erro ao importar Excel: "+str(e)};status=400
+            finally:
+                self._end_database_maintenance()
+            return self.send_json(result,status)
         except ImportError:return self.send_json({"ok":False,"error":"Falta openpyxl. Execute python -m pip install openpyxl"},500)
         except Exception as e:return self.send_json({"ok":False,"error":"Erro ao importar Excel: "+str(e)},400)
     def log_message(self,fmt,*args):print("%s - %s"%(self.address_string(),fmt%args))

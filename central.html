@@ -83,6 +83,15 @@
  <div class="actions"><button id="clearScoresBtn" style="background:#a50d25">Limpar todos os bancos</button></div>
  <div id="clearScoresStatus" class="status">A exclusão só será executada após confirmação.</div>
  <hr style="border:0;border-top:1px solid #e5b7be;margin:18px 0">
+ <h2>Restaurar backup dos bancos</h2>
+ <p class="help">Selecione um conjunto completo dos três bancos. Antes de restaurar, o sistema também guarda o estado atual como um novo backup. São mantidos os 30 conjuntos mais recentes.</p>
+ <div class="actions">
+  <select id="backupSetSelect" aria-label="Conjunto de backup para restaurar"><option value="">Carregue a lista de backups</option></select>
+  <button type="button" id="refreshBackupsBtn" class="secondary">Atualizar lista</button>
+  <button type="button" id="restoreBackupBtn" disabled>Restaurar conjunto selecionado</button>
+ </div>
+ <div id="backupRestoreStatus" class="status" aria-live="polite">A restauração não altera nenhum dado até a confirmação.</div>
+ <hr style="border:0;border-top:1px solid #e5b7be;margin:18px 0">
  <h2>Limpar somente a etapa CONCURSO</h2>
  <p class="help">Apaga apenas notas e nomes de avaliadores do Concurso. Preserva candidatos, fotos, categorias, ordem, publicação/classificação da Audição e todas as notas da Audição.</p>
  <div class="actions"><button id="clearContestBtn" class="secondary">Limpar notas do Concurso</button></div>

@@ -83,9 +83,9 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 $('file').addEventListener('change',()=>{$('importBtn').disabled=!$('file').files.length;$('importStatus').textContent=$('file').files.length?'Arquivo selecionado: '+$('file').files[0].name:'Aguardando arquivo Excel.'});
 $('importBtn').addEventListener('click',async()=>{
  const file=$('file').files[0];if(!file)return;
- if(!confirm('A reimportação substituirá a lista de candidatas e apagará as chegadas, notas da Audição e publicação atual. O sistema criará um backup automático do banco da Audição antes de continuar. Deseja reimportar?'))return;
+ if(!confirm('A reimportação substituirá a lista de candidatas e apagará as chegadas, notas da Audição e publicação atual. O sistema criará um conjunto de backup dos três bancos antes de continuar. Deseja reimportar?'))return;
  $('importBtn').disabled=true;$('importStatus').textContent='Importando e validando candidatos…';
- try{const fd=new FormData();fd.append('file',file);const r=await fetch('/api/import',{method:'POST',headers:{'X-Uesp-Confirm-Import':'true'},body:fd});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Erro ao importar');$('importStatus').textContent=`Importação concluída: ${j.imported} candidato(s). Backup: ${j.backup||'não necessário'}.`;await refresh()}
+ try{const fd=new FormData();fd.append('file',file);const r=await fetch('/api/import',{method:'POST',headers:{'X-Uesp-Confirm-Import':'true'},body:fd});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Erro ao importar');$('importStatus').textContent=`Importação concluída: ${j.imported} candidato(s). Conjunto de backup dos três bancos: ${j.backup_set_id||j.backup||'não criado'}.`;await refresh();await loadBackupSets()}
  catch(e){$('importStatus').textContent='Falha na importação: '+e.message}finally{$('importBtn').disabled=false}
 });
 $('refreshBtn').addEventListener('click',refresh);$('filter').addEventListener('change',render);if($('candidateSearch'))$('candidateSearch').addEventListener('input',render);
@@ -98,6 +98,36 @@ $('clearContestBtn').addEventListener('click',async()=>{
  const b=$('clearContestBtn');b.disabled=true;$('clearContestStatus').textContent='Limpando somente as notas do Concurso…';
  try{const j=await api('/api/clear-contest-scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});$('clearContestStatus').textContent=`Concluído: ${j.deleted} nota(s) do Concurso removida(s). Lista de avaliadores e dados da Audição preservados.`;}catch(e){$('clearContestStatus').textContent='Falha: '+e.message}finally{b.disabled=false}
 });
+async function loadBackupSets(){
+ const select=$('backupSetSelect'),button=$('restoreBackupBtn'),status=$('backupRestoreStatus');
+ $('refreshBackupsBtn').disabled=true;button.disabled=true;status.textContent='Carregando conjuntos de backup…';
+ try{
+  const j=await api('/api/backups'),sets=j.sets||[];
+  const reasons={antes_limpeza_total:'Antes da limpeza total',antes_restauracao:'Antes de uma restauração',antes_reimportacao:'Antes de reimportar a lista'};
+  select.innerHTML='<option value="">— Selecione um conjunto —</option>'+sets.map(item=>{
+   const date=new Date(item.created_at),dateLabel=Number.isNaN(date.getTime())?item.created_at:date.toLocaleString('pt-BR');
+   const size=(Number(item.size_bytes||0)/1048576).toLocaleString('pt-BR',{maximumFractionDigits:1});
+   return `<option value="${esc(item.id)}">${esc(dateLabel)} · ${esc(reasons[item.reason]||'Backup completo')} · ${size} MB</option>`;
+  }).join('');
+  select.disabled=!sets.length;status.textContent=sets.length?`${sets.length} conjunto(s) completo(s) disponível(is). A política mantém os ${j.retention||30} mais recentes.`:'Nenhum conjunto completo disponível na pasta backup de banco.';
+ }catch(e){select.innerHTML='<option value="">Não foi possível carregar os backups</option>';select.disabled=true;status.textContent='Falha ao listar backups: '+e.message}
+ finally{$('refreshBackupsBtn').disabled=false;button.disabled=!select.value}
+}
+$('refreshBackupsBtn').addEventListener('click',loadBackupSets);
+$('backupSetSelect').addEventListener('change',()=>{$('restoreBackupBtn').disabled=!$('backupSetSelect').value});
+$('restoreBackupBtn').addEventListener('click',async()=>{
+ const setId=$('backupSetSelect').value;if(!setId)return;
+ const selected=$('backupSetSelect').selectedOptions[0]?.textContent||setId;
+ if(!confirm(`Restaurar este conjunto de três bancos?\n\n${selected}\n\nO estado atual também será salvo em um novo conjunto antes da restauração.`))return;
+ const button=$('restoreBackupBtn');button.disabled=true;$('refreshBackupsBtn').disabled=true;$('backupRestoreStatus').textContent='Protegendo o estado atual e restaurando os três bancos…';
+ try{
+  const restored=await api('/api/restore-backup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backup_set_id:setId,confirm:true})});
+  const active=await api('/api/active-stage'),stage=String(active.stage||'AUDICAO').toUpperCase()==='CONCURSO'?'concurso':'audicao';
+  $('globalStage').value=stage;await applyGlobalStage(stage,false);await refresh();await loadRoster();
+  await loadBackupSets();
+  $('backupRestoreStatus').textContent=`Restauração concluída. Estado anterior preservado no conjunto ${restored.recovery_set_id}.`;
+ }catch(e){await loadBackupSets();$('backupRestoreStatus').textContent='Falha ao restaurar: '+e.message;button.disabled=!$('backupSetSelect').value;$('refreshBackupsBtn').disabled=false}
+});
 $('clearScoresBtn').addEventListener('click',async()=>{
  const confirmed=confirm('ATENÇÃO: esta limpeza total apagará TODOS os dados dos três bancos: lista de participantes, chegadas, fotos, dados de cadastro, notas, avaliadores, resultados publicados e configurações de Audição, Concurso e Agulha de Ouro. Serão criados backups dos três bancos na pasta "backup de banco" antes da exclusão. Depois, será necessário importar uma nova lista. Deseja continuar?');
  if(!confirmed)return;
@@ -105,7 +135,8 @@ $('clearScoresBtn').addEventListener('click',async()=>{
  try{
   const j=await api('/api/clear-scores',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
   $('globalStage').value='audicao';await applyGlobalStage('audicao',false);await refresh();await loadRoster();
-  $('clearScoresStatus').textContent=`Limpeza total concluída: ${j.deleted_records||0} registro(s) apagados. Importe uma nova lista para iniciar. Backups: ${(j.backups||[]).map(name=>'backup de banco\\'+name).join(' | ')}`;
+  $('clearScoresStatus').textContent=`Limpeza total concluída: ${j.deleted_records||0} registro(s) apagados. Backup dos três bancos: ${j.backup_set_id}. Importe uma nova lista para iniciar.`;
+  await loadBackupSets();
  }catch(e){$('clearScoresStatus').textContent='Falha na exclusão: '+e.message}
  finally{btn.disabled=false}
 });
@@ -114,4 +145,4 @@ $('exportBtn').addEventListener('click',()=>{
  const csv=['Categoria;Nome do candidato;Chegada;Horário;Dispositivo',...rows.map(x=>{const a=arrivalFor(x);return `"${normCategory(x.category).replaceAll('"','""')}";"${String(x.name||'').replaceAll('"','""')}";"${a?'Presente':'Aguardando'}";"${a?formatTime(a.arrived_at):''}";"${a?String(a.device||'').replaceAll('"','""'):''}"`})].join('\r\n');
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='candidatos_uesp_2027.csv';a.click();URL.revokeObjectURL(a.href)
 });
-refresh();setInterval(refresh,5000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh()});
+refresh();loadBackupSets();setInterval(refresh,5000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh()});
