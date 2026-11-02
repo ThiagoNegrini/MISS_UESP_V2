@@ -12,7 +12,7 @@ async function load(){
  if(refreshInFlight||document.visibilityState==='hidden')return;
  refreshInFlight=true;
  try{
-  const [c,a]=await Promise.all([api('/api/arrival-candidates'),api('/api/arrivals')]);
+  const [c,a]=await Promise.all([api('/api/arrival-candidates'),api('/api/arrivals?stage=CONCURSO')]);
   candidates=c.candidates||[];arrivals=a.arrivals||{};
   $('status').textContent='Conectado à central. Exibindo somente os 25 classificados na audição.';
   render();

@@ -1,7 +1,8 @@
 
 let previewRows=[];
 let auditionCandidates=[];
-let arrivalData={};
+let auditionArrivalData={};
+let contestArrivalData={};
 let auditionScores={};
 let contestScores={};
 let evaluatorRoster=[];
@@ -18,10 +19,13 @@ async function refresh(){
  if(refreshInFlight||document.visibilityState==='hidden')return;
  refreshInFlight=true;
  try{
-   const [d,c,a,s,e,contest,contestEvaluators,sync,agulha]=await Promise.all([api('/api/arrival-candidates'),api('/api/candidates'),api('/api/arrivals'),api('/api/scores'),api('/api/evaluators?stage=AUDICAO'),api('/api/contest-candidates'),api('/api/evaluators?stage=CONCURSO'),api('/api/evaluator-sync-status').catch(()=>({reports:[]})),api('/api/agulha/data')]);
-   previewRows=d.candidates||[]; auditionCandidates=c.candidates||[]; arrivalData=a.arrivals||{}; auditionScores=s.scores||{}; contestScores=contest.scores||{}; contestCandidates=contest.candidates||[]; evaluatorRoster=e.evaluators||[]; contestEvaluatorRoster=contestEvaluators.evaluators||[]; evaluatorSyncReports=sync.reports||[]; agulhaProgressData=agulha||{evaluators:[],results:[]}; render();renderScoreProgress();
-   const presentes=previewRows.filter(x=>arrivalFor(x)).length;
-   $('dbStatus').textContent='Banco local conectado. '+previewRows.length+' participante(s) cadastrado(s); '+((contest.candidates||[]).length)+' classificado(s) para o Concurso; '+presentes+' chegada(s) confirmada(s). Sincronização automática ativa.';
+   const loaded=await Promise.allSettled([api('/api/arrival-candidates'),api('/api/candidates'),api('/api/arrivals?stage=AUDICAO'),api('/api/arrivals?stage=CONCURSO'),api('/api/scores'),api('/api/evaluators?stage=AUDICAO'),api('/api/contest-candidates'),api('/api/evaluators?stage=CONCURSO'),api('/api/evaluator-sync-status'),api('/api/agulha/data')]);
+   const values=loaded.map(result=>result.status==='fulfilled'?result.value:null),errors=loaded.map((result,index)=>result.status==='rejected'?`/api/${['arrival-candidates','candidates','arrivals?stage=AUDICAO','arrivals?stage=CONCURSO','scores','evaluators?stage=AUDICAO','contest-candidates','evaluators?stage=CONCURSO','evaluator-sync-status','agulha/data'][index]}: ${result.reason?.message||'falha de comunicação'}`:null).filter(Boolean);
+   if(loaded[1].status==='rejected')throw new Error('/api/candidates — '+loaded[1].reason.message);
+   const d=values[0]||{candidates:[]},c=values[1],auditionArrivals=values[2]||{arrivals:{}},contestArrivals=values[3]||{arrivals:{}},s=values[4]||{scores:{}},e=values[5]||{evaluators:[]},contest=values[6]||{candidates:[],scores:{}},contestEvaluators=values[7]||{evaluators:[]},sync=values[8]||{reports:[]},agulha=values[9]||{evaluators:[],results:[]};
+   previewRows=d.candidates||[]; auditionCandidates=c.candidates||[]; auditionArrivalData=auditionArrivals.arrivals||{}; contestArrivalData=contestArrivals.arrivals||{}; auditionScores=s.scores||{}; contestScores=contest.scores||{}; contestCandidates=contest.candidates||[]; evaluatorRoster=e.evaluators||[]; contestEvaluatorRoster=contestEvaluators.evaluators||[]; evaluatorSyncReports=sync.reports||[]; agulhaProgressData=agulha||{evaluators:[],results:[]}; render();renderScoreProgress();
+   const presentes=(previewRows.length?previewRows:auditionCandidates).filter(x=>arrivalFor(x,previewRows.length?'CONCURSO':'AUDICAO')).length;
+   $('dbStatus').textContent='Banco da Audição conectado. '+auditionCandidates.length+' participante(s) cadastrado(s); '+(contest.candidates||[]).length+' classificado(s) para o Concurso; '+presentes+' chegada(s) confirmada(s).'+(errors.length?' Algumas áreas secundárias não responderam: '+errors.join(' | '):' Sincronização automática ativa.');
  }catch(e){$('dbStatus').textContent='Não foi possível atualizar o painel: '+e.message+'. Confirme que a Central está aberta pelo endereço do servidor local.'}
  finally{refreshInFlight=false}
 }
@@ -33,7 +37,7 @@ function normCategory(value){
  return String(value||'').trim();
 }
 function candidateCategory(candidate){return normCategory(candidate?.category||candidate?.categoria||candidate?.modalidade||candidate?.category_name||'')}
-function arrivalFor(candidate){return arrivalData[String(candidate.id)]||null}
+function arrivalFor(candidate,stage=$('globalStage')?.value==='concurso'?'CONCURSO':'AUDICAO'){const arrivals=stage==='CONCURSO'?contestArrivalData:auditionArrivalData;return arrivals[String(candidate.id)]||null}
 function evaluatorProgress(candidate){
  const stage=$('globalStage')?.value==='concurso'?'CONCURSO':'AUDICAO';
  const saved=(stage==='concurso'?contestScores:auditionScores)[String(candidate.id)]||{};
@@ -85,7 +89,7 @@ function renderScoreProgress(){
  const stage=$('scoreProgressStage')?.value||'AUDICAO';
  const roster=stage==='CONCURSO'?contestEvaluatorRoster:stage==='AGULHA'?(agulhaProgressData.evaluators||[]):evaluatorRoster;
  const source=stage==='CONCURSO'?contestCandidates:stage==='AGULHA'?(agulhaProgressData.results||[]):auditionCandidates;
- const candidates=source.filter(candidate=>stage==='AGULHA'||(()=>{const arrival=arrivalFor(candidate);return !!arrival&&String(arrival.status||'PRESENTE').toUpperCase()!=='AUSENTE'})());
+ const candidates=source.filter(candidate=>stage==='AGULHA'||(()=>{const arrival=arrivalFor(candidate,stage);return !!arrival&&String(arrival.status||'PRESENTE').toUpperCase()!=='AUSENTE'})());
  const scores=stage==='CONCURSO'?contestScores:stage==='AGULHA'?{}:auditionScores;
  const criteriaFor=candidate=>{
   if(stage==='AUDICAO')return ['communication','samba'];
@@ -177,7 +181,7 @@ $('clearScoresBtn').addEventListener('click',async()=>{
 });
 $('exportBtn').addEventListener('click',()=>{
  const f=$('filter').value,pf=$('presenceFilter') ? $('presenceFilter').value : '';let rows=previewRows.filter(x=>!f||normCategory(x.category)===f);rows=rows.filter(x=>!pf||(pf==='present'?!!arrivalFor(x):!arrivalFor(x)));
- const csv=['Categoria;Nome do candidato;Chegada;Horário;Dispositivo',...rows.map(x=>{const a=arrivalFor(x);return `"${normCategory(x.category).replaceAll('"','""')}";"${String(x.name||'').replaceAll('"','""')}";"${a?'Presente':'Aguardando'}";"${a?formatTime(a.arrived_at):''}";"${a?String(a.device||'').replaceAll('"','""'):''}"`})].join('\r\n');
+ const csv=['Categoria;Nome do candidato;Chegada;Horário;Dispositivo',...rows.map(x=>{const a=arrivalFor(x,'CONCURSO');return `"${normCategory(x.category).replaceAll('"','""')}";"${String(x.name||'').replaceAll('"','""')}";"${a?'Presente':'Aguardando'}";"${a?formatTime(a.arrived_at):''}";"${a?String(a.device||'').replaceAll('"','""'):''}"`})].join('\r\n');
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='candidatos_uesp_2027.csv';a.click();URL.revokeObjectURL(a.href)
 });
 refresh();loadBackupSets();setInterval(refresh,5000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh()});

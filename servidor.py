@@ -609,13 +609,20 @@ class Handler(SimpleHTTPRequestHandler):
                     FROM candidates ORDER BY category,name COLLATE NOCASE""").fetchall()
             return self.send_json({"ok":True,"candidates":[dict(x) for x in rows]})
         if path=="/api/arrivals":
+            from urllib.parse import parse_qs
+            requested_stage=(parse_qs(urlparse(self.path).query).get("stage",[""])[0] or "").strip().upper()
+            if requested_stage not in ("","AUDICAO","CONCURSO"):
+                return self.send_json({"ok":False,"error":"Etapa inválida para carregar chegadas."},400)
+            if requested_stage=="AUDICAO":
+                with dbconn(AUDITION_DB) as con: rows=con.execute("SELECT candidate_id,arrived_at,device FROM arrivals").fetchall()
+                return self.send_json({"ok":True,"stage":"AUDICAO","arrivals":{str(r["candidate_id"]):{"arrived_at":r["arrived_at"],"device":r["device"],"status":"PRESENTE"} for r in rows}})
             with dbconn(CONTEST_DB) as con:
                 ensure_contest_schema(con)
                 migrated=con.execute("SELECT COUNT(*) FROM contest_participants").fetchone()[0]
                 rows=con.execute("SELECT candidate_id,arrived_at,device,status FROM contest_arrivals").fetchall()
-            if migrated: return self.send_json({"ok":True,"arrivals":{str(r["candidate_id"]):{"arrived_at":r["arrived_at"],"device":r["device"],"status":r["status"]} for r in rows}})
+            if migrated: return self.send_json({"ok":True,"stage":"CONCURSO","arrivals":{str(r["candidate_id"]):{"arrived_at":r["arrived_at"],"device":r["device"],"status":r["status"]} for r in rows}})
             with dbconn() as con: rows=con.execute("SELECT candidate_id,arrived_at,device FROM arrivals").fetchall()
-            return self.send_json({"ok":True,"arrivals":{str(r["candidate_id"]):{"arrived_at":r["arrived_at"],"device":r["device"]} for r in rows}})
+            return self.send_json({"ok":True,"stage":"AUDICAO","arrivals":{str(r["candidate_id"]):{"arrived_at":r["arrived_at"],"device":r["device"],"status":"PRESENTE"} for r in rows}})
         if path=="/api/scores":
             with dbconn() as con:
                 rows=con.execute("SELECT candidate_id,evaluator,communication,samba,updated_at FROM scores").fetchall()
