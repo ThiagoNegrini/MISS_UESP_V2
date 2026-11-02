@@ -242,8 +242,11 @@ def agulha_result_rows(contest_con, agulha_con):
     output=[]
     for c in candidates:
         vals=by.get(c["id"],{})
-        total=round(sum(vals.values()),1) if vals else None
-        complete=sum(1 for ev in evaluators if ev in vals)
+        # Somente notas de avaliadores atualmente cadastrados podem compor a classificação.
+        # Notas históricas de avaliadores removidos da lista não devem alterar o resultado.
+        active_scores=[vals[ev] for ev in evaluators if ev in vals]
+        total=round(sum(active_scores),1) if active_scores else None
+        complete=len(active_scores)
         output.append({"id":c["id"],"category":c["category"],"name":c["name"],
             "artistic_name":c.get("artistic_name") or "","photo":c.get("photo") or "",
             "scores":{ev:vals.get(ev) for ev in evaluators},"total":total,
