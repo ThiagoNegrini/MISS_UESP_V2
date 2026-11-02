@@ -10,6 +10,6 @@ async function requestJSON(path, options={}) {
  let payload;
  try { payload=await response.json(); }
  catch(e) { throw new Error('Resposta inválida da rota '+path+'.'); }
- if(!response.ok||payload.ok===false) throw new Error(payload.error||'Falha na comunicação com a central (HTTP '+response.status+').');
+ if(!response.ok||payload.ok===false) { const error=new Error(payload.error||'Falha na comunicação com a central (HTTP '+response.status+').');error.status=response.status;throw error; }
  return payload;
 }
